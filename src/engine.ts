@@ -117,14 +117,14 @@ async function doScrobble(
   }
 }
 
-function scheduleEarly(play: ActivePlay, rules: ScrobbleRuleConfig, enabled: boolean): void {
+function scheduleEarly(play: ActivePlay, rules: ScrobbleRuleConfig): void {
   clearEarly(play);
-  if (!enabled || !play.sawPlay || play.scrobbled) return;
+  if (!play.sawPlay || play.scrobbled) return;
   const delay = thresholdDelayMs(play.durationSec, rules);
   play.earlyTimer = setTimeout(() => {
     play.earlyTimer = null;
     // Best-effort continuous-play assumption after a real play event.
-    // Not verified position; pause/seek invisible. Default setting keeps this off.
+    // Not verified position; pause/seek invisible. Always on; miot often finish-only.
     const playedProxy = delay / 1000;
     if (!qualifiesForScrobble(play.durationSec, playedProxy, rules)) return;
     void doScrobble(play, "early-threshold", rules);
@@ -181,7 +181,7 @@ export async function handlePlayEvent(event: PlayEvent): Promise<void> {
       await appendLog("error", `nowplaying failed: ${msg}`);
       songloft.log.error(`[lastfm] nowplaying failed: ${msg}`);
     }
-    scheduleEarly(play, rules, settings.earlyOnThreshold);
+    scheduleEarly(play, rules);
     return;
   }
 

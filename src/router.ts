@@ -66,7 +66,6 @@ router.get("/api/settings", async () => {
     minDurationSec: settings.minDurationSec,
     delayPercent: settings.delayPercent,
     delayMaxSec: settings.delayMaxSec,
-    earlyOnThreshold: settings.earlyOnThreshold,
     status: publicStatus(settings),
   });
 });
@@ -100,8 +99,6 @@ router.post("/api/settings", async (req) => {
     const n = Number(body.delayMaxSec);
     if (Number.isFinite(n)) patch.delayMaxSec = n;
   }
-  if (typeof body.earlyOnThreshold === "boolean") patch.earlyOnThreshold = body.earlyOnThreshold;
-
   const nextKey = typeof patch.apiKey === "string" ? (patch.apiKey as string) : cur.apiKey;
   const nextSecret =
     typeof patch.apiSecret === "string" ? (patch.apiSecret as string) : cur.apiSecret;

@@ -15,12 +15,6 @@ export interface PluginSettings {
   delayPercent: number;
   /** Pano-like: absolute delay cap (sec). Default 240. */
   delayMaxSec: number;
-  /**
-   * If true, after a real `play` event schedule one scrobble at the threshold
-   * assuming continuous play. Default true (web play with progress). miot/speaker
-   * often finish-only so early path usually no-ops; finish still scrobbles.
-   */
-  earlyOnThreshold: boolean;
 }
 
 const SETTINGS_KEY = "settings";
@@ -39,7 +33,6 @@ const DEFAULTS: PluginSettings = {
   minDurationSec: 30,
   delayPercent: 50,
   delayMaxSec: 240,
-  earlyOnThreshold: true,
 };
 
 function asObject(raw: unknown): Record<string, unknown> {
@@ -77,9 +70,6 @@ export async function loadSettings(): Promise<PluginSettings> {
       minDurationSec: numOr(data.minDurationSec, DEFAULTS.minDurationSec),
       delayPercent: numOr(data.delayPercent, DEFAULTS.delayPercent),
       delayMaxSec: numOr(data.delayMaxSec, DEFAULTS.delayMaxSec),
-      earlyOnThreshold: typeof data.earlyOnThreshold === "boolean"
-        ? data.earlyOnThreshold
-        : DEFAULTS.earlyOnThreshold,
     };
   } catch {
     return { ...DEFAULTS };
@@ -89,7 +79,10 @@ export async function loadSettings(): Promise<PluginSettings> {
 export async function saveSettings(partial: Partial<PluginSettings>): Promise<PluginSettings> {
   const cur = await loadSettings();
   const next: PluginSettings = { ...cur, ...partial };
-  await songloft.storage.set(SETTINGS_KEY, next);
+  // Drop legacy earlyOnThreshold if still present in raw storage merge paths.
+  const toStore = { ...next } as Record<string, unknown>;
+  delete toStore.earlyOnThreshold;
+  await songloft.storage.set(SETTINGS_KEY, toStore);
   return next;
 }
 
@@ -157,7 +150,6 @@ export function publicStatus(settings: PluginSettings) {
     minDurationSec: settings.minDurationSec,
     delayPercent: settings.delayPercent,
     delayMaxSec: settings.delayMaxSec,
-    earlyOnThreshold: settings.earlyOnThreshold,
   };
 }
 

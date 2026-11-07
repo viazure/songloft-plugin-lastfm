@@ -102,7 +102,6 @@ function applyConnectionUI(st, settings) {
   $("minDurationSec").disabled = !connected;
   $("delayPercent").disabled = !connected;
   $("delayMaxSec").disabled = !connected;
-  $("earlyOnThreshold").disabled = !connected;
   $("btnSave").disabled = !connected;
 
   // 已连接：整块连接面板隐藏；未连接：显示在播放记录之上
@@ -122,7 +121,6 @@ async function refresh(opts) {
   $("minDurationSec").value = settings.minDurationSec ?? 30;
   $("delayPercent").value = settings.delayPercent ?? 50;
   $("delayMaxSec").value = settings.delayMaxSec ?? 240;
-  $("earlyOnThreshold").checked = !!settings.earlyOnThreshold;
 
   applyConnectionUI(st, settings);
 
@@ -161,7 +159,6 @@ async function saveScrobble() {
     minDurationSec: Number($("minDurationSec").value),
     delayPercent: Number($("delayPercent").value),
     delayMaxSec: Number($("delayMaxSec").value),
-    earlyOnThreshold: $("earlyOnThreshold").checked,
   };
   await apiPost("/api/settings", body);
 }
