@@ -8,3 +8,4 @@ dist/
 local.config.json
 _gen_*.py
 
+.songloft-dev.json
