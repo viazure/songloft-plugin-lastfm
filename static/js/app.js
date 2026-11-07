@@ -241,7 +241,7 @@ async function refresh(opts) {
   updateLoveCurrent(st.lastPlay);
 
   const loveDisabled = connectionState((st && st.status) || {}) !== "connected";
-  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest"].forEach((id) => {
+  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved"].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = loveDisabled;
   });
@@ -498,9 +498,8 @@ $("btnSyncLoved").onclick = async () => {
   } catch (e) {
     setFlash("Loved 同步失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
-  } finally {
-    btn.disabled = false;
   }
+  // disabled state comes from refresh() / connectionState — do not force-enable
 };
 $("btnLoveTest").onclick = async () => {
   try {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { upsertLovedPlaylist, LOVED_PLAYLIST_NAME } from "../src/loved-playlist";
+import { upsertLovedPlaylist, syncLovedToPlaylist, LOVED_PLAYLIST_NAME } from "../src/loved-playlist";
 import type { PlaylistsApi } from "../src/loved-playlist";
 
 function mockApi(initial: Array<{ id: number; name: string; songs: number[] }>): PlaylistsApi & {
@@ -115,5 +115,44 @@ describe("upsertLovedPlaylist", () => {
     const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [1, 2] }]);
     await upsertLovedPlaylist(api, [2]);
     expect(api.state[0].songs).toEqual([2]);
+  });
+});
+
+describe("syncLovedToPlaylist catch", () => {
+  it("preserves partial counts on catch", async () => {
+    const scrobbler = {
+      getLovedTracks: async () => ({
+        tracks: [
+          { artist: "A", title: "T1" },
+          { artist: "B", title: "T2" },
+        ],
+        truncated: false,
+      }),
+    };
+    const songsApi = {
+      list: async () => [{ id: 1, artist: "A", title: "T1" }],
+    };
+    const playlistsApi = {
+      list: async () => {
+        throw new Error("playlist boom");
+      },
+      create: async () => ({ id: 1 }),
+      update: async () => ({}),
+      addSongs: async () => ({}),
+      removeSongs: async () => ({}),
+    };
+    const r = await syncLovedToPlaylist({
+      scrobbler: scrobbler as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: playlistsApi as any,
+      now: () => 123,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.loved).toBe(2);
+    expect(r.matched).toBe(1);
+    expect(r.unmatched).toBe(1);
+    expect(r.reason).toMatch(/playlist boom/);
   });
 });

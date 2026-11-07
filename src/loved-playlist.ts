@@ -36,7 +36,11 @@ export function formatLovedSyncSummary(r: LovedPlaylistSyncResult | null | undef
   if (!r) return "尚未同步过";
   const when = new Date(r.ts).toLocaleString();
   if (!r.ok) {
-    return `${when} · 失败：${r.reason}`;
+    const partial =
+      r.loved > 0
+        ? `（已拉到 loved ${r.loved}·命中 ${r.matched}·未命中 ${r.unmatched}）`
+        : "";
+    return `${when} · 失败：${r.reason}${partial}`;
   }
   const trunc = r.truncated ? " · 已截断" : "";
   return `${when} · loved ${r.loved} · 命中 ${r.matched} · 未命中 ${r.unmatched}${trunc}`;
@@ -162,13 +166,25 @@ export interface SyncDeps {
 export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylistSyncResult> {
   const ts = (deps.now || Date.now)();
   const hardCap = deps.hardCap ?? LOVED_HARD_CAP;
+  const partial: {
+    loved: number;
+    matched: number;
+    unmatched: number;
+    truncated?: boolean;
+    unmatchedSamples?: Array<{ artist: string; title: string }>;
+  } = { loved: 0, matched: 0, unmatched: 0 };
   try {
     const loved = await deps.scrobbler.getLovedTracks({
       username: deps.username,
       hardCap,
     });
+    partial.loved = loved.tracks.length;
+    partial.truncated = loved.truncated;
     const library = await listAllLibrarySongs(deps.songsApi);
     const match = matchLovedTracks(loved.tracks, library);
+    partial.matched = match.matched;
+    partial.unmatched = match.unmatched;
+    partial.unmatchedSamples = match.unmatchedSamples;
     const upsert = await upsertLovedPlaylist(deps.playlistsApi, match.matchedIds);
     return {
       ok: true,
@@ -183,12 +199,15 @@ export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylist
       unmatchedSamples: match.unmatchedSamples,
     };
   } catch (e) {
+    // Preserve any counts already obtained before the failure (do not flash false zeros).
     return {
       ok: false,
       ts,
-      loved: 0,
-      matched: 0,
-      unmatched: 0,
+      loved: partial.loved,
+      matched: partial.matched,
+      unmatched: partial.unmatched,
+      truncated: partial.truncated,
+      unmatchedSamples: partial.unmatchedSamples,
       reason: String(e ?? "未知错误"),
     };
   }

@@ -104,6 +104,23 @@ describe("formatLovedSyncSummary", () => {
     });
     expect(fail).toContain("失败");
     expect(fail).toContain("网络错误");
+    expect(fail).not.toContain("已拉到");
+  });
+
+  it("failure with partial counts keeps readable progress", () => {
+    const fail = formatLovedSyncSummary({
+      ok: false,
+      ts: 0,
+      loved: 12,
+      matched: 5,
+      unmatched: 7,
+      reason: "playlist write failed",
+    });
+    expect(fail).toContain("失败");
+    expect(fail).toContain("playlist write failed");
+    expect(fail).toContain("loved 12");
+    expect(fail).toContain("命中 5");
+    expect(fail).toContain("未命中 7");
   });
 
   it("formats success N/M/K", () => {

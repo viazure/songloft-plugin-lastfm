@@ -18,10 +18,7 @@
   ],
   "updateUrl": "https://raw.githubusercontent.com/viazure/songloft-plugin-lastfm/main/plugin.json",
   "download_url": "https://github.com/viazure/songloft-plugin-lastfm/releases/download/v0.1.18/lastfm.jsplugin.zip",
-  "entryHash": "78f236b79c8296c057dc66f93608fab1db250b74e4876b01c57ab2cc8badeb46",
-  "zipHash": "1bd4a7b1e2d7ccef624516274c38b095605976004525ecf7cbcb63962a322de5",
+  "entryHash": "fa46a75cebbdf79019a2c1a7b64eeb2fc39dc99e0bd28cced345071dbae91c66",
+  "zipHash": "0e7e32449895cd567936943bc545ff2a623314e06beb6fb1fba37909426805e3",
   "icon": "icon.b79ed352.png"
 }
-
-
-
