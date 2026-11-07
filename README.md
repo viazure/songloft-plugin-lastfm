@@ -1,6 +1,6 @@
 # Songloft Last.fm
 
-Songloft 插件：把播放同步到 [Last.fm](https://www.last.fm/)（scrobble / now playing）。
+听歌时自动把播放记录同步到 [Last.fm](https://www.last.fm/)。
 
 - `play` → `track.updateNowPlaying`
 - `finish` / 合格的 `skip` → `track.scrobble`
