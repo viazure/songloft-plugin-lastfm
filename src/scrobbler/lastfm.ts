@@ -235,4 +235,93 @@ export class LastFmScrobbler implements Scrobbler {
     }
     return { tracks, truncated, totalReported: totalReported || tracks.length };
   }
+
+  /**
+   * Page through user.getRecentTracks (newest first) until exhausted or hardCap.
+   * Skips nowplaying half-entries. Read-only; session key optional.
+   */
+  async getRecentTracks(opts?: {
+    username?: string;
+    limitPerPage?: number;
+    hardCap?: number;
+    /** Only keep tracks with uts > fromUts (exclusive). Omit/0 = no floor. */
+    fromUts?: number;
+  }): Promise<{
+    tracks: Array<{ artist: string; title: string; mbid?: string; uts: number }>;
+    truncated: boolean;
+    totalReported: number;
+  }> {
+    const user = (opts?.username || this.creds.username || "").trim();
+    if (!user) throw new Error("Last.FM username required for recent tracks");
+    if (!this.creds.apiKey) throw new Error("Last.FM apiKey required");
+    const limitPerPage = Math.min(Math.max(opts?.limitPerPage ?? 50, 1), 50);
+    const hardCap = Math.max(opts?.hardCap ?? 500, 1);
+    const fromUts =
+      typeof opts?.fromUts === "number" && Number.isFinite(opts.fromUts) && opts.fromUts > 0
+        ? Math.floor(opts.fromUts)
+        : 0;
+    const tracks: Array<{ artist: string; title: string; mbid?: string; uts: number }> = [];
+    let page = 1;
+    let totalPages = 1;
+    let totalReported = 0;
+    let truncated = false;
+    let hitFloor = false;
+
+    while (page <= totalPages && tracks.length < hardCap && !hitFloor) {
+      const params: ParamMap = {
+        method: "user.getRecentTracks",
+        api_key: this.creds.apiKey,
+        user,
+        limit: String(limitPerPage),
+        page: String(page),
+      };
+      if (this.creds.sessionKey) params.sk = this.creds.sessionKey;
+      const data: any = await post(params, this.creds.apiSecret);
+      const root = data?.recenttracks;
+      const attr = root?.["@attr"] || {};
+      totalPages = Math.max(1, parseInt(String(attr.totalPages || "1"), 10) || 1);
+      totalReported = parseInt(String(attr.total || "0"), 10) || totalReported;
+      let batch = root?.track;
+      if (!batch) batch = [];
+      if (!Array.isArray(batch)) batch = [batch];
+      for (const raw of batch) {
+        if (tracks.length >= hardCap) {
+          truncated = true;
+          break;
+        }
+        const np = raw?.["@attr"]?.nowplaying;
+        if (np === "true" || np === true) continue; // half-entry: not a finished scrobble
+        const title = String(raw?.name || "").trim();
+        const artistRaw = raw?.artist;
+        const artist =
+          typeof artistRaw === "string"
+            ? artistRaw.trim()
+            : String(artistRaw?.name || artistRaw?.["#text"] || "").trim();
+        if (!title || !artist) continue;
+        const utsRaw = raw?.date?.uts ?? raw?.date?.["#text"];
+        const uts = parseInt(String(utsRaw ?? ""), 10);
+        if (!Number.isFinite(uts) || uts <= 0) continue;
+        if (fromUts > 0 && uts <= fromUts) {
+          hitFloor = true;
+          break; // pages are newest-first; older pages only get older
+        }
+        const mbidRaw = String(raw?.mbid || "").trim();
+        const entry: { artist: string; title: string; mbid?: string; uts: number } = {
+          artist,
+          title,
+          uts,
+        };
+        if (mbidRaw) entry.mbid = mbidRaw;
+        tracks.push(entry);
+      }
+      if (tracks.length >= hardCap && page < totalPages) truncated = true;
+      if (truncated || hitFloor) break;
+      page += 1;
+    }
+
+    if (!truncated && !hitFloor && totalReported > hardCap && tracks.length >= hardCap) {
+      truncated = true;
+    }
+    return { tracks, truncated, totalReported: totalReported || tracks.length };
+  }
 }

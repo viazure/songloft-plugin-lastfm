@@ -1,5 +1,8 @@
 import type { LovedScheduleState } from "./loved-schedule";
 import { DEFAULT_LOVED_SCHEDULE, normalizeIntervalHours } from "./loved-schedule";
+import type { StatsScheduleState } from "./stats-schedule";
+import { DEFAULT_STATS_SCHEDULE, normalizeStatsIntervalHours } from "./stats-schedule";
+import { normalizeHardCap, STATS_SYNC_DEFAULT_HARD_CAP, NEAR_WINDOW_STRATEGY } from "./stats-sync";
 
 export interface PluginSettings {
   apiKey: string;
@@ -20,6 +23,8 @@ export interface PluginSettings {
   delayMaxSec: number;
   /** Songloft playlist name for Loved sync. Empty → "Last.fm Loved". */
   lovedPlaylistName: string;
+  /** Max recent tracks per stats sync (1..1000, default 500). */
+  statsSyncHardCap: number;
 }
 
 const SETTINGS_KEY = "settings";
@@ -42,6 +47,7 @@ const DEFAULTS: PluginSettings = {
   delayPercent: 50,
   delayMaxSec: 240,
   lovedPlaylistName: "Last.fm Loved",
+  statsSyncHardCap: STATS_SYNC_DEFAULT_HARD_CAP,
 };
 
 function asObject(raw: unknown): Record<string, unknown> {
@@ -81,6 +87,9 @@ export async function loadSettings(): Promise<PluginSettings> {
       delayMaxSec: numOr(data.delayMaxSec, DEFAULTS.delayMaxSec),
       lovedPlaylistName:
         typeof data.lovedPlaylistName === "string" ? data.lovedPlaylistName : DEFAULTS.lovedPlaylistName,
+      statsSyncHardCap: normalizeHardCap(
+        data.statsSyncHardCap !== undefined ? data.statsSyncHardCap : DEFAULTS.statsSyncHardCap
+      ),
     };
   } catch {
     return { ...DEFAULTS };
@@ -155,7 +164,7 @@ export interface ScrobbleRecord {
   /** Human-readable failure reason (never secrets). Optional path hint on success. */
   reason?: string;
   source?: string;
-  /** early-threshold | finish | skip | switch | replay | nowplaying | test | love | unlove | loved_playlist_sync */
+  /** early-threshold | finish | skip | switch | replay | nowplaying | test | love | unlove | loved_playlist_sync | stats_sync */
   path?: string;
 }
 
@@ -444,3 +453,143 @@ export async function saveLovedSchedule(
   await songloft.storage.set(LOVED_SCHEDULE_KEY, next);
   return next;
 }
+
+
+/** Last successful/failed Last.fm → stats sync summary (settings page). */
+export interface StatsSyncStored {
+  ts: number;
+  ok: boolean;
+  fetched: number;
+  matched: number;
+  imported: number;
+  skippedNear: number;
+  skippedExact: number;
+  unmatched: number;
+  truncated?: boolean;
+  watermarkUts: number;
+  nearWindowStrategy: string;
+  hardCap: number;
+  reason?: string;
+  unmatchedSamples?: Array<{ artist: string; title: string }>;
+}
+
+const STATS_SYNC_KEY = "stats_sync_state";
+
+export async function loadStatsSyncState(): Promise<StatsSyncStored | null> {
+  try {
+    const raw = await songloft.storage.get(STATS_SYNC_KEY);
+    const data = asObject(raw);
+    if (!data || typeof data.ts !== "number") return null;
+    const out: StatsSyncStored = {
+      ts: data.ts as number,
+      ok: data.ok === true,
+      fetched: numOr(data.fetched, 0),
+      matched: numOr(data.matched, 0),
+      imported: numOr(data.imported, 0),
+      skippedNear: numOr(data.skippedNear, 0),
+      skippedExact: numOr(data.skippedExact, 0),
+      unmatched: numOr(data.unmatched, 0),
+      watermarkUts: numOr(data.watermarkUts, 0),
+      nearWindowStrategy:
+        typeof data.nearWindowStrategy === "string" && data.nearWindowStrategy
+          ? data.nearWindowStrategy
+          : NEAR_WINDOW_STRATEGY,
+      hardCap: normalizeHardCap(data.hardCap),
+    };
+    if (data.truncated === true) out.truncated = true;
+    if (typeof data.reason === "string" && data.reason) {
+      out.reason = sanitizeReason(data.reason);
+    }
+    if (Array.isArray(data.unmatchedSamples)) {
+      out.unmatchedSamples = (data.unmatchedSamples as unknown[])
+        .map((x) => {
+          if (!x || typeof x !== "object") return null;
+          const o = x as Record<string, unknown>;
+          const artist = typeof o.artist === "string" ? o.artist : "";
+          const title = typeof o.title === "string" ? o.title : "";
+          if (!artist && !title) return null;
+          return { artist, title };
+        })
+        .filter((x): x is { artist: string; title: string } => !!x)
+        .slice(0, 10);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveStatsSyncState(result: StatsSyncStored): Promise<StatsSyncStored> {
+  const toStore: StatsSyncStored = {
+    ts: result.ts,
+    ok: !!result.ok,
+    fetched: result.fetched | 0,
+    matched: result.matched | 0,
+    imported: result.imported | 0,
+    skippedNear: result.skippedNear | 0,
+    skippedExact: result.skippedExact | 0,
+    unmatched: result.unmatched | 0,
+    watermarkUts: Math.max(0, result.watermarkUts | 0),
+    nearWindowStrategy: result.nearWindowStrategy || NEAR_WINDOW_STRATEGY,
+    hardCap: normalizeHardCap(result.hardCap),
+  };
+  if (result.truncated) toStore.truncated = true;
+  if (result.reason) toStore.reason = sanitizeReason(result.reason);
+  if (result.unmatchedSamples?.length) {
+    toStore.unmatchedSamples = result.unmatchedSamples.slice(0, 10);
+  }
+  await songloft.storage.set(STATS_SYNC_KEY, toStore);
+  return toStore;
+}
+
+const STATS_SCHEDULE_KEY = "stats_schedule";
+
+export async function loadStatsSchedule(): Promise<StatsScheduleState> {
+  try {
+    const raw = await songloft.storage.get(STATS_SCHEDULE_KEY);
+    const data = asObject(raw);
+    const lastSuccessAt =
+      typeof data.lastSuccessAt === "number" && Number.isFinite(data.lastSuccessAt)
+        ? data.lastSuccessAt
+        : null;
+    const nextDueAt =
+      typeof data.nextDueAt === "number" && Number.isFinite(data.nextDueAt)
+        ? data.nextDueAt
+        : null;
+    return {
+      enabled: data.enabled === true,
+      intervalHours: normalizeStatsIntervalHours(data.intervalHours),
+      lastSuccessAt,
+      nextDueAt,
+    };
+  } catch {
+    return { ...DEFAULT_STATS_SCHEDULE };
+  }
+}
+
+export async function saveStatsSchedule(
+  partial: Partial<StatsScheduleState>
+): Promise<StatsScheduleState> {
+  const cur = await loadStatsSchedule();
+  const next: StatsScheduleState = {
+    enabled: partial.enabled !== undefined ? !!partial.enabled : cur.enabled,
+    intervalHours: normalizeStatsIntervalHours(
+      partial.intervalHours !== undefined ? partial.intervalHours : cur.intervalHours
+    ),
+    lastSuccessAt:
+      partial.lastSuccessAt !== undefined
+        ? partial.lastSuccessAt == null || !Number.isFinite(partial.lastSuccessAt as number)
+          ? null
+          : (partial.lastSuccessAt as number)
+        : cur.lastSuccessAt,
+    nextDueAt:
+      partial.nextDueAt !== undefined
+        ? partial.nextDueAt == null || !Number.isFinite(partial.nextDueAt as number)
+          ? null
+          : (partial.nextDueAt as number)
+        : cur.nextDueAt,
+  };
+  await songloft.storage.set(STATS_SCHEDULE_KEY, next);
+  return next;
+}
+

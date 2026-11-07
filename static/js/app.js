@@ -31,6 +31,7 @@ const PATH_LABEL = {
   love: "红心",
   unlove: "取消红心",
   loved_playlist_sync: "Loved歌单",
+  stats_sync: "播放统计同步",
 };
 
 function pathLabel(path) {
@@ -129,6 +130,47 @@ function applyLovedScheduleFields(settingsOrSchedule) {
       : src.intervalHours;
   if (enabledEl) enabledEl.checked = !!enabled;
   if (intervalEl) intervalEl.value = String(hours === 6 || hours === 12 || hours === 24 ? hours : 24);
+}
+
+
+function formatStatsNextDue(schedule) {
+  if (!schedule || !schedule.enabled) return "下次：定时关闭";
+  if (!schedule.nextDueAt) return "下次：待排期";
+  return "下次：" + new Date(schedule.nextDueAt).toLocaleString();
+}
+
+function applyStatsScheduleFields(settingsOrSchedule) {
+  const enabledEl = $("statsScheduleEnabled");
+  const capEl = $("statsSyncHardCap");
+  const src = settingsOrSchedule || {};
+  if (enabledEl) {
+    enabledEl.checked =
+      src.statsScheduleEnabled !== undefined
+        ? !!src.statsScheduleEnabled
+        : !!src.enabled;
+  }
+  if (capEl && src.statsSyncHardCap !== undefined) {
+    capEl.value = String(src.statsSyncHardCap);
+  } else if (capEl && src.hardCap !== undefined) {
+    capEl.value = String(src.hardCap);
+  }
+}
+
+async function loadStatsSync() {
+  const el = $("statsSyncLast");
+  const nextEl = $("statsSyncNext");
+  if (!el) return;
+  try {
+    const res = await apiGet("/api/stats-sync");
+    el.textContent = "上次：" + (res.summary || "尚未同步过");
+    if (nextEl) nextEl.textContent = formatStatsNextDue(res.schedule);
+    if (res.schedule) applyStatsScheduleFields({ ...res.schedule, hardCap: res.hardCap });
+    if (typeof res.hardCap === "number" && $("statsSyncHardCap")) {
+      $("statsSyncHardCap").value = String(res.hardCap);
+    }
+  } catch (e) {
+    el.textContent = "上次：无法读取（" + friendlyLogMessage(e.message) + "）";
+  }
 }
 
 async function loadLovedSync() {
@@ -277,7 +319,7 @@ async function refresh(opts) {
 
   const loveDisabled = connectionState((st && st.status) || {}) !== "connected";
   // P3: playlist name can be saved while disconnected; sync/love still need session.
-  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved"].forEach((id) => {
+  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved", "btnSyncStats"].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = loveDisabled;
   });
@@ -287,6 +329,11 @@ async function refresh(opts) {
   if ($("lovedScheduleEnabled")) $("lovedScheduleEnabled").disabled = false;
   if ($("lovedScheduleIntervalHours")) $("lovedScheduleIntervalHours").disabled = false;
   if ($("btnSaveLovedSchedule")) $("btnSaveLovedSchedule").disabled = false;
+  if ($("statsScheduleEnabled")) $("statsScheduleEnabled").disabled = false;
+  if ($("statsSyncHardCap")) $("statsSyncHardCap").disabled = false;
+  if ($("btnSaveStatsCap")) $("btnSaveStatsCap").disabled = false;
+  if ($("btnSaveStatsSchedule")) $("btnSaveStatsSchedule").disabled = false;
+  applyStatsScheduleFields(settings);
 
   if (options.flash) setFlash(options.flash, options.flashCls || "muted");
   else if (!options.keepFlash) setFlash("");
@@ -300,6 +347,7 @@ async function refresh(opts) {
   try {
     await loadScrobbles();
   await loadLovedSync();
+  await loadStatsSync();
   } catch (_) {
     const box = $("scrobbleList");
     if (box) box.innerHTML = '<div class="scrobble-empty err">记录加载失败</div>';
@@ -608,3 +656,48 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
+
+
+$("btnSaveStatsCap") && ($("btnSaveStatsCap").onclick = async () => {
+  try {
+    const raw = $("statsSyncHardCap") ? $("statsSyncHardCap").value : "500";
+    await apiPost("/api/settings", { statsSyncHardCap: Number(raw) });
+    await refresh({ flash: "同步上限已保存", flashCls: "ok" });
+  } catch (e) {
+    setFlash("保存上限失败: " + friendlyLogMessage(e.message), "err");
+  }
+});
+
+$("btnSaveStatsSchedule") && ($("btnSaveStatsSchedule").onclick = async () => {
+  try {
+    const enabled = $("statsScheduleEnabled") ? $("statsScheduleEnabled").checked : false;
+    await apiPost("/api/settings", {
+      statsScheduleEnabled: !!enabled,
+      statsScheduleIntervalHours: 24,
+    });
+    await refresh({ flash: "播放统计定时已保存", flashCls: "ok" });
+  } catch (e) {
+    setFlash("保存定时失败: " + friendlyLogMessage(e.message), "err");
+  }
+});
+
+$("btnSyncStats") && ($("btnSyncStats").onclick = async () => {
+  const btn = $("btnSyncStats");
+  if (btn) btn.disabled = true;
+  try {
+    // persist hard cap before sync
+    const raw = $("statsSyncHardCap") ? $("statsSyncHardCap").value : "500";
+    await apiPost("/api/settings", { statsSyncHardCap: Number(raw) });
+    setFlash("正在同步 Last.fm → 播放统计…", "muted");
+    const res = await apiPost("/api/stats-sync", {});
+    await refresh({
+      flash: "播放统计已同步：" + (res.summary || ""),
+      flashCls: "ok",
+    });
+  } catch (e) {
+    setFlash("播放统计同步失败: " + friendlyLogMessage(e.message), "err");
+    try { await loadStatsSync(); } catch (_) {}
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});

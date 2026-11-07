@@ -13,14 +13,19 @@ import {
   loadLovedSchedule,
   loadScrobbleRecords,
   loadSettings,
+  loadStatsSyncState,
   markSessionInvalid,
   publicStatus,
   saveLovedSchedule,
+  saveStatsSchedule,
   saveSettings,
 } from "./store";
 import { resolveLovedPlaylistName, formatLovedSyncSummary } from "./loved-playlist";
 import { runLovedPlaylistSync } from "./loved-sync-run";
 import { lovedScheduler, normalizeIntervalHours } from "./loved-schedule";
+import { formatStatsSyncSummary, normalizeHardCap } from "./stats-sync";
+import { runStatsSync } from "./stats-sync-run";
+import { statsScheduler } from "./stats-schedule";
 
 const router = createRouter();
 
@@ -81,6 +86,11 @@ router.get("/api/settings", async () => {
     lovedScheduleIntervalHours: schedule.intervalHours,
     lovedScheduleLastSuccessAt: schedule.lastSuccessAt,
     lovedScheduleNextDueAt: schedule.nextDueAt,
+    statsSyncHardCap: normalizeHardCap(settings.statsSyncHardCap),
+    statsScheduleEnabled: !!statsScheduler.getState().enabled,
+    statsScheduleIntervalHours: statsScheduler.getState().intervalHours,
+    statsScheduleLastSuccessAt: statsScheduler.getState().lastSuccessAt,
+    statsScheduleNextDueAt: statsScheduler.getState().nextDueAt,
     status: publicStatus(settings),
   });
 });
@@ -118,10 +128,27 @@ router.post("/api/settings", async (req) => {
     // Persist raw (may be blank); resolve at sync/read time so empty → default.
     patch.lovedPlaylistName = body.lovedPlaylistName;
   }
+  if (typeof body.statsSyncHardCap === "number" || typeof body.statsSyncHardCap === "string") {
+    patch.statsSyncHardCap = normalizeHardCap(body.statsSyncHardCap);
+  }
   const schedulePatch: {
     enabled?: boolean;
     intervalHours?: number;
   } = {};
+  const statsSchedulePatch: {
+    enabled?: boolean;
+    intervalHours?: 24;
+  } = {};
+  if (typeof body.statsScheduleEnabled === "boolean") {
+    statsSchedulePatch.enabled = body.statsScheduleEnabled;
+  }
+  // Interval fixed at 24h for now; accept but normalize.
+  if (
+    typeof body.statsScheduleIntervalHours === "number" ||
+    typeof body.statsScheduleIntervalHours === "string"
+  ) {
+    statsSchedulePatch.intervalHours = 24;
+  }
   if (typeof body.lovedScheduleEnabled === "boolean") {
     schedulePatch.enabled = body.lovedScheduleEnabled;
   }
@@ -162,6 +189,14 @@ router.post("/api/settings", async (req) => {
     schedule = await lovedScheduler.applyState(schedulePatch, { rearm: true, persist: false });
     await saveLovedSchedule(schedule);
   }
+  let statsSchedule = statsScheduler.getState();
+  if (statsSchedulePatch.enabled !== undefined || statsSchedulePatch.intervalHours !== undefined) {
+    statsSchedule = await statsScheduler.applyState(statsSchedulePatch, {
+      rearm: true,
+      persist: false,
+    });
+    await saveStatsSchedule(statsSchedule);
+  }
   await appendLog(
     "info",
     sessionInvalidated ? "settings saved (session cleared; reconnect required)" : "settings saved"
@@ -175,6 +210,11 @@ router.post("/api/settings", async (req) => {
     lovedScheduleIntervalHours: schedule.intervalHours,
     lovedScheduleLastSuccessAt: schedule.lastSuccessAt,
     lovedScheduleNextDueAt: schedule.nextDueAt,
+    statsSyncHardCap: normalizeHardCap(settings.statsSyncHardCap),
+    statsScheduleEnabled: !!statsSchedule.enabled,
+    statsScheduleIntervalHours: statsSchedule.intervalHours,
+    statsScheduleLastSuccessAt: statsSchedule.lastSuccessAt,
+    statsScheduleNextDueAt: statsSchedule.nextDueAt,
   });
 });
 
@@ -492,6 +532,59 @@ router.post("/api/loved-playlist/sync", async () => {
     playlistIdChanged: result.playlistIdChanged,
     truncated: result.truncated,
     unmatchedSamples: result.unmatchedSamples,
+    schedule: {
+      enabled: !!schedule.enabled,
+      intervalHours: schedule.intervalHours,
+      lastSuccessAt: schedule.lastSuccessAt,
+      nextDueAt: schedule.nextDueAt,
+    },
+  });
+});
+
+
+/** Last.fm → stats sync summary + schedule for settings page. */
+router.get("/api/stats-sync", async () => {
+  const last = await loadStatsSyncState();
+  const schedule = statsScheduler.getState();
+  const settings = await loadSettings();
+  return jsonResponse({
+    ok: true,
+    last,
+    summary: formatStatsSyncSummary(last as any),
+    hardCap: normalizeHardCap(settings.statsSyncHardCap),
+    schedule: {
+      enabled: !!schedule.enabled,
+      intervalHours: schedule.intervalHours,
+      lastSuccessAt: schedule.lastSuccessAt,
+      nextDueAt: schedule.nextDueAt,
+    },
+  });
+});
+
+/**
+ * Sync Last.fm recent scrobbles into stats PlayRecords via host-forward import.
+ * Shares exclusive lock with Loved playlist sync (busy → 409).
+ * Does not scrobble and does not write on local finish.
+ */
+router.post("/api/stats-sync", async () => {
+  const result = await runStatsSync("manual");
+  if (result.skipped) {
+    return jsonResponse(
+      { ok: false, skipped: true, error: "skipped_busy", reason: "skipped_busy" },
+      409
+    );
+  }
+  if (!result.ok) {
+    return jsonResponse(
+      { ok: false, error: result.error, last: result.last, summary: result.summary },
+      result.httpStatus || 400
+    );
+  }
+  const schedule = statsScheduler.getState();
+  return jsonResponse({
+    ok: true,
+    last: result.last,
+    summary: result.summary,
     schedule: {
       enabled: !!schedule.enabled,
       intervalHours: schedule.intervalHours,

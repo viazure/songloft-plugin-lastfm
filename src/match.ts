@@ -75,6 +75,21 @@ const SAMPLE_CAP = 10;
  * Match loved tracks to library. mbid wins when both sides have one;
  * else exact normalized artist+title. Dedupes song ids (first love wins order).
  */
+/** Resolve one LFM track to a local songId (mbid then artist+title). No fake ids. */
+export function resolveSongId(
+  track: LovedTrackRef,
+  indexes: ReturnType<typeof buildLibraryIndexes>
+): number | undefined {
+  const mb = normalizeMbid(track.mbid);
+  if (mb) {
+    const hits = indexes.byMbid.get(mb);
+    if (hits && hits.length) return hits[0];
+  }
+  const hits = indexes.byArtistTitle.get(artistTitleKey(track.artist, track.title));
+  if (hits && hits.length) return hits[0];
+  return undefined;
+}
+
 export function matchLovedTracks(
   loved: LovedTrackRef[],
   songs: LibrarySongRef[],

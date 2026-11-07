@@ -214,10 +214,33 @@
     </div>
     <p class="muted" style="margin-top:6px">默认关闭。打开后按间隔自动覆盖刷新（与手动同步同一套）；与 keep-alive / onlyMiot 无关。断连到点仍会尝试，失败写入观测，不关开关。</p>
   </div>
+
+  <!-- 2a3. Last.fm → 播放统计 -->
+  <div class="card" id="section-stats-sync">
+    <h2>同步到播放统计</h2>
+    <p class="muted">把 Last.fm <strong>历史 scrobble</strong>（recent tracks）写成官方「播放统计」插件的 PlayRecord。只做 feeder；排行/最近播放仍看 stats。不包含 loved / top / 正在播放半条。匹配复用 Loved 的艺人+曲名；未命中跳过。近窗策略：与已有 stats 同曲 <code>|Δt|≤120s</code> 跳过，避免与本机 finish 双计。<strong>禁止</strong>在 scrobble 成功后再写 stats。</p>
+    <div id="statsSyncLast" class="muted" style="margin-top:8px">上次：尚未同步过</div>
+    <div id="statsSyncNext" class="muted" style="margin-top:4px">下次：—</div>
+    <div class="row" style="margin-top:10px; align-items:center; gap:12px; flex-wrap:wrap">
+      <button type="button" id="btnSyncStats">同步到播放统计</button>
+      <label for="statsSyncHardCap" style="margin:0">单次上限</label>
+      <input id="statsSyncHardCap" type="number" min="1" max="1000" value="500" style="width:88px" />
+      <button type="button" class="secondary" id="btnSaveStatsCap">保存上限</button>
+    </div>
+    <div class="row" style="margin-top:12px; align-items:center; gap:12px; flex-wrap:wrap">
+      <label style="display:flex; align-items:center; gap:6px; margin:0">
+        <input id="statsScheduleEnabled" type="checkbox" />
+        定时同步到播放统计
+      </label>
+      <span class="muted">间隔固定 24 小时</span>
+      <button type="button" class="secondary" id="btnSaveStatsSchedule">保存定时</button>
+    </div>
+    <p class="muted" style="margin-top:6px">默认关闭。与 Loved 定时互斥（busy 则跳过）。需已安装并启用「播放统计」插件；失败原因写在上一行，不暴露 token。</p>
+  </div>
 <!-- 2b. 最近 scrobble 观测 -->
   <div class="card" id="section-recent">
     <h2>最近记录</h2>
-    <p class="muted">本机最近成功 / 失败的 scrobble、红心与 Loved 歌单同步（最多 20 条），方便排查。密钥不会出现在这里。</p>
+    <p class="muted">本机最近成功 / 失败的 scrobble、红心、Loved 歌单与播放统计同步（最多 20 条），方便排查。密钥不会出现在这里。</p>
     <div class="row" style="margin-top:8px">
       <button type="button" class="secondary" id="btnReloadScrobbles">刷新记录</button>
     </div>

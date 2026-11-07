@@ -4,7 +4,16 @@ import { refreshScrobbler, subscribePlayEvents, unsubscribePlayEvents } from "./
 import { ensureHostKeepAlive } from "./keepalive";
 import { lovedScheduler } from "./loved-schedule";
 import { bindLovedScheduleTick } from "./loved-sync-run";
-import { loadLovedSchedule, loadSettings, publicStatus, saveLovedSchedule } from "./store";
+import { statsScheduler } from "./stats-schedule";
+import { bindStatsScheduleTick } from "./stats-sync-run";
+import {
+  loadLovedSchedule,
+  loadSettings,
+  loadStatsSchedule,
+  publicStatus,
+  saveLovedSchedule,
+  saveStatsSchedule,
+} from "./store";
 
 async function onInit(): Promise<void> {
   const settings = await loadSettings();
@@ -23,6 +32,23 @@ async function onInit(): Promise<void> {
     songloft.log.info(
       `[lastfm] loved schedule armed: every ${savedSchedule.intervalHours}h; nextDue=${
         savedSchedule.nextDueAt ? new Date(savedSchedule.nextDueAt).toISOString() : "(pending)"
+      }`
+    );
+  }
+
+  // Stats sync schedule: independent timer; exclusive lock shared with Loved.
+  statsScheduler.setPersist(async (st) => {
+    await saveStatsSchedule(st);
+  });
+  bindStatsScheduleTick();
+  const savedStatsSchedule = await loadStatsSchedule();
+  await statsScheduler.applyState(savedStatsSchedule, { rearm: true, persist: false });
+  if (savedStatsSchedule.enabled) {
+    songloft.log.info(
+      `[lastfm] stats schedule armed: every ${savedStatsSchedule.intervalHours}h; nextDue=${
+        savedStatsSchedule.nextDueAt
+          ? new Date(savedStatsSchedule.nextDueAt).toISOString()
+          : "(pending)"
       }`
     );
   }
@@ -56,6 +82,7 @@ async function onInit(): Promise<void> {
 
 async function onDeinit(): Promise<void> {
   lovedScheduler.dispose();
+  statsScheduler.dispose();
   unsubscribePlayEvents();
   songloft.log.info("[lastfm] stopped");
 }
