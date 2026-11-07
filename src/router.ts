@@ -10,15 +10,17 @@ import {
   isInvalidSessionError,
   loadLog,
   loadLovedPlaylistSync,
+  loadLovedSchedule,
   loadScrobbleRecords,
   loadSettings,
   markSessionInvalid,
   publicStatus,
-  saveLovedPlaylistSync,
+  saveLovedSchedule,
   saveSettings,
 } from "./store";
-import {
-  resolveLovedPlaylistName, formatLovedSyncSummary, syncLovedToPlaylist } from "./loved-playlist";
+import { resolveLovedPlaylistName, formatLovedSyncSummary } from "./loved-playlist";
+import { runLovedPlaylistSync } from "./loved-sync-run";
+import { lovedScheduler, normalizeIntervalHours } from "./loved-schedule";
 
 const router = createRouter();
 
@@ -61,6 +63,7 @@ router.get("/api/status", async () => {
 
 router.get("/api/settings", async () => {
   const settings = await loadSettings();
+  const schedule = lovedScheduler.getState();
   return jsonResponse({
     // never echo apiKey/secret/session in clear — only set flags
     apiKeySet: !!settings.apiKey,
@@ -74,6 +77,10 @@ router.get("/api/settings", async () => {
     delayPercent: settings.delayPercent,
     delayMaxSec: settings.delayMaxSec,
     lovedPlaylistName: resolveLovedPlaylistName(settings.lovedPlaylistName),
+    lovedScheduleEnabled: !!schedule.enabled,
+    lovedScheduleIntervalHours: schedule.intervalHours,
+    lovedScheduleLastSuccessAt: schedule.lastSuccessAt,
+    lovedScheduleNextDueAt: schedule.nextDueAt,
     status: publicStatus(settings),
   });
 });
@@ -111,6 +118,19 @@ router.post("/api/settings", async (req) => {
     // Persist raw (may be blank); resolve at sync/read time so empty → default.
     patch.lovedPlaylistName = body.lovedPlaylistName;
   }
+  const schedulePatch: {
+    enabled?: boolean;
+    intervalHours?: number;
+  } = {};
+  if (typeof body.lovedScheduleEnabled === "boolean") {
+    schedulePatch.enabled = body.lovedScheduleEnabled;
+  }
+  if (
+    typeof body.lovedScheduleIntervalHours === "number" ||
+    typeof body.lovedScheduleIntervalHours === "string"
+  ) {
+    schedulePatch.intervalHours = normalizeIntervalHours(body.lovedScheduleIntervalHours);
+  }
   const nextKey = typeof patch.apiKey === "string" ? (patch.apiKey as string) : cur.apiKey;
   const nextSecret =
     typeof patch.apiSecret === "string" ? (patch.apiSecret as string) : cur.apiSecret;
@@ -135,6 +155,13 @@ router.post("/api/settings", async (req) => {
 
   const settings = await saveSettings(patch as any);
   await refreshScrobbler();
+  let schedule = lovedScheduler.getState();
+  if (schedulePatch.enabled !== undefined || schedulePatch.intervalHours !== undefined) {
+    // Persist + rearm; first enable sets nextDue = now+interval (no immediate sync).
+    // Enabling with null nextDue → applyState fills now+interval (no immediate sync).
+    schedule = await lovedScheduler.applyState(schedulePatch, { rearm: true, persist: false });
+    await saveLovedSchedule(schedule);
+  }
   await appendLog(
     "info",
     sessionInvalidated ? "settings saved (session cleared; reconnect required)" : "settings saved"
@@ -144,6 +171,10 @@ router.post("/api/settings", async (req) => {
     status: publicStatus(settings),
     sessionInvalidated,
     message: statusMessage(settings),
+    lovedScheduleEnabled: !!schedule.enabled,
+    lovedScheduleIntervalHours: schedule.intervalHours,
+    lovedScheduleLastSuccessAt: schedule.lastSuccessAt,
+    lovedScheduleNextDueAt: schedule.nextDueAt,
   });
 });
 
@@ -415,129 +446,61 @@ router.post("/api/test/unlove", async (req) => {
 });
 
 
-/** Last loved→playlist sync summary for settings page. */
+/** Last loved→playlist sync summary + schedule state for settings page. */
 router.get("/api/loved-playlist", async () => {
   const last = await loadLovedPlaylistSync();
+  const schedule = lovedScheduler.getState();
   return jsonResponse({
     ok: true,
     last,
     summary: formatLovedSyncSummary(last),
+    schedule: {
+      enabled: !!schedule.enabled,
+      intervalHours: schedule.intervalHours,
+      lastSuccessAt: schedule.lastSuccessAt,
+      nextDueAt: schedule.nextDueAt,
+    },
   });
 });
 
 /**
  * Sync Last.fm loved tracks into Songloft playlist (configurable name; default Last.fm Loved).
  * Explicit user action — not gated by onlyMiot; isolated from scrobble/flush/keep-alive.
+ * Shares exclusive lock + cover-refresh pipeline with the scheduled tick.
  */
 router.post("/api/loved-playlist/sync", async () => {
-  await refreshScrobbler();
-  const settings = await loadSettings();
-  const client = getScrobbler();
-  if (!client || !(await client.isReady()) || !settings.username) {
-    const reason = !settings.username
-      ? "尚未连接账号（缺少用户名）"
-      : "尚未连接账号：需要应用凭证 + 已连接的账号";
-    const fail = {
-      ts: Date.now(),
-      ok: false as const,
-      loved: 0,
-      matched: 0,
-      unmatched: 0,
-      reason,
-    };
-    await saveLovedPlaylistSync(fail);
-    await appendScrobbleRecord({
-      title: resolveLovedPlaylistName(settings.lovedPlaylistName),
-      artist: "playlist",
-      ok: false,
-      reason,
-      path: "loved_playlist_sync",
-      source: "manual",
-    });
-    return jsonResponse({ ok: false, error: reason, last: fail, summary: formatLovedSyncSummary(fail) }, 400);
-  }
-
-  // songloft.songs / songloft.playlists are host bridge APIs (need playlists.* perms).
-  const previous = await loadLovedPlaylistSync();
-  const playlistName = resolveLovedPlaylistName(settings.lovedPlaylistName);
-  const result = await syncLovedToPlaylist({
-    scrobbler: client,
-    username: settings.username,
-    songsApi: songloft.songs,
-    playlistsApi: songloft.playlists,
-    playlistName,
-    previousPlaylistName: previous?.playlistName || null,
-  });
-
-  if (!result.ok) {
-    if (isInvalidSessionError(result.reason)) {
-      await markSessionInvalid();
-      await refreshScrobbler();
-    }
-    const reason = friendlyLastFmError(result.reason);
-    const stored = await saveLovedPlaylistSync({ ...result, reason });
-    await appendScrobbleRecord({
-      title: resolveLovedPlaylistName(settings.lovedPlaylistName),
-      artist: "playlist",
-      ok: false,
-      reason,
-      path: "loved_playlist_sync",
-      source: "manual",
-    });
-    await appendLog("error", `loved playlist sync failed: ${reason}`);
+  const result = await runLovedPlaylistSync("manual");
+  if (result.skipped) {
     return jsonResponse(
-      { ok: false, error: reason, last: stored, summary: formatLovedSyncSummary(stored) },
-      400
+      { ok: false, skipped: true, error: "skipped_busy", reason: "skipped_busy" },
+      409
     );
   }
-
-  const summaryBits = `loved ${result.loved} · 命中 ${result.matched} · 未命中 ${result.unmatched}`;
-  const truncNote = result.truncated ? " · truncated@1000" : "";
-  const idNote = result.playlistIdChanged ? " · playlist id changed" : "";
-  const targetNote = result.targetChanged ? " · 目标歌单已变" : "";
-  const stored = await saveLovedPlaylistSync({
-    ts: result.ts,
-    ok: true,
-    loved: result.loved,
-    matched: result.matched,
-    unmatched: result.unmatched,
-    truncated: result.truncated,
-    playlistId: result.playlistId,
-    playlistIdChanged: result.playlistIdChanged,
-    unmatchedSamples: result.unmatchedSamples,
-    playlistName: result.playlistName,
-    reason: summaryBits + truncNote + idNote + targetNote,
-  });
-  await appendScrobbleRecord({
-    title: result.playlistName,
-    artist: "playlist",
-    ok: true,
-    reason: summaryBits + truncNote + targetNote,
-    path: "loved_playlist_sync",
-    source: "manual",
-  });
-  if (result.unmatchedSamples?.length) {
-    const sample = result.unmatchedSamples
-      .slice(0, 5)
-      .map((s) => `${s.artist} - ${s.title}`)
-      .join("; ");
-    await appendLog("info", `loved playlist unmatched sample: ${sample}`);
+  if (!result.ok) {
+    return jsonResponse(
+      { ok: false, error: result.error, last: result.last, summary: result.summary },
+      result.httpStatus || 400
+    );
   }
-  await appendLog(
-    "info",
-    `loved playlist sync ok: ${summaryBits}${truncNote} id=${result.playlistId}`
-  );
+  const schedule = lovedScheduler.getState();
   return jsonResponse({
     ok: true,
-    last: stored,
-    summary: formatLovedSyncSummary(stored),
+    last: result.last,
+    summary: result.summary,
     playlistId: result.playlistId,
     created: result.created,
     playlistIdChanged: result.playlistIdChanged,
     truncated: result.truncated,
     unmatchedSamples: result.unmatchedSamples,
+    schedule: {
+      enabled: !!schedule.enabled,
+      intervalHours: schedule.intervalHours,
+      lastSuccessAt: schedule.lastSuccessAt,
+      nextDueAt: schedule.nextDueAt,
+    },
   });
 });
+
 export async function handleHTTP(req: HTTPRequest): Promise<HTTPResponse> {
   return await router.handle(req);
 }

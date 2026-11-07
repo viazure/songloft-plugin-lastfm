@@ -104,15 +104,46 @@ async function doLove(kind, opts) {
 }
 
 
+function formatLovedNextDue(schedule) {
+  if (!schedule || !schedule.enabled) return "下次：定时已关闭";
+  if (!schedule.nextDueAt) return "下次：等待安排";
+  try {
+    return "下次：" + new Date(schedule.nextDueAt).toLocaleString();
+  } catch (_) {
+    return "下次：—";
+  }
+}
+
+function applyLovedScheduleFields(settingsOrSchedule) {
+  const enabledEl = $("lovedScheduleEnabled");
+  const intervalEl = $("lovedScheduleIntervalHours");
+  if (!enabledEl && !intervalEl) return;
+  const src = settingsOrSchedule || {};
+  const enabled =
+    src.lovedScheduleEnabled !== undefined
+      ? !!src.lovedScheduleEnabled
+      : !!(src.enabled);
+  const hours =
+    src.lovedScheduleIntervalHours !== undefined
+      ? src.lovedScheduleIntervalHours
+      : src.intervalHours;
+  if (enabledEl) enabledEl.checked = !!enabled;
+  if (intervalEl) intervalEl.value = String(hours === 6 || hours === 12 || hours === 24 ? hours : 24);
+}
+
 async function loadLovedSync() {
   const el = $("lovedSyncLast");
+  const nextEl = $("lovedSyncNext");
   if (!el) return null;
   try {
     const res = await apiGet("/api/loved-playlist");
     el.textContent = "上次：" + (res.summary || "尚未同步过");
+    if (nextEl) nextEl.textContent = formatLovedNextDue(res.schedule);
+    if (res.schedule) applyLovedScheduleFields(res.schedule);
     return res;
   } catch (e) {
     el.textContent = "上次：无法读取（" + friendlyLogMessage(e.message) + "）";
+    if (nextEl) nextEl.textContent = "下次：—";
     return null;
   }
 }
@@ -239,6 +270,7 @@ async function refresh(opts) {
   if ($("lovedPlaylistName")) {
     $("lovedPlaylistName").value = settings.lovedPlaylistName || "Last.fm Loved";
   }
+  applyLovedScheduleFields(settings);
 
   applyConnectionUI(st, settings);
   updateLoveCurrent(st.lastPlay);
@@ -251,6 +283,10 @@ async function refresh(opts) {
   });
   if ($("lovedPlaylistName")) $("lovedPlaylistName").disabled = false;
   if ($("btnSaveLovedName")) $("btnSaveLovedName").disabled = false;
+  // Schedule toggle/interval: not gated by connection / onlyMiot.
+  if ($("lovedScheduleEnabled")) $("lovedScheduleEnabled").disabled = false;
+  if ($("lovedScheduleIntervalHours")) $("lovedScheduleIntervalHours").disabled = false;
+  if ($("btnSaveLovedSchedule")) $("btnSaveLovedSchedule").disabled = false;
 
   if (options.flash) setFlash(options.flash, options.flashCls || "muted");
   else if (!options.keepFlash) setFlash("");

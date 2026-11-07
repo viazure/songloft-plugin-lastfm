@@ -1,3 +1,6 @@
+import type { LovedScheduleState } from "./loved-schedule";
+import { DEFAULT_LOVED_SCHEDULE, normalizeIntervalHours } from "./loved-schedule";
+
 export interface PluginSettings {
   apiKey: string;
   apiSecret: string;
@@ -391,3 +394,53 @@ export async function saveLovedPlaylistSync(
   return toStore;
 }
 
+const LOVED_SCHEDULE_KEY = "loved_schedule";
+
+export async function loadLovedSchedule(): Promise<LovedScheduleState> {
+  try {
+    const raw = await songloft.storage.get(LOVED_SCHEDULE_KEY);
+    const data = asObject(raw);
+    const lastSuccessAt =
+      typeof data.lastSuccessAt === "number" && Number.isFinite(data.lastSuccessAt)
+        ? data.lastSuccessAt
+        : null;
+    const nextDueAt =
+      typeof data.nextDueAt === "number" && Number.isFinite(data.nextDueAt)
+        ? data.nextDueAt
+        : null;
+    return {
+      enabled: data.enabled === true,
+      intervalHours: normalizeIntervalHours(data.intervalHours),
+      lastSuccessAt,
+      nextDueAt,
+    };
+  } catch {
+    return { ...DEFAULT_LOVED_SCHEDULE };
+  }
+}
+
+export async function saveLovedSchedule(
+  partial: Partial<LovedScheduleState>
+): Promise<LovedScheduleState> {
+  const cur = await loadLovedSchedule();
+  const next: LovedScheduleState = {
+    enabled: partial.enabled !== undefined ? !!partial.enabled : cur.enabled,
+    intervalHours: normalizeIntervalHours(
+      partial.intervalHours !== undefined ? partial.intervalHours : cur.intervalHours
+    ),
+    lastSuccessAt:
+      partial.lastSuccessAt !== undefined
+        ? partial.lastSuccessAt == null || !Number.isFinite(partial.lastSuccessAt as number)
+          ? null
+          : (partial.lastSuccessAt as number)
+        : cur.lastSuccessAt,
+    nextDueAt:
+      partial.nextDueAt !== undefined
+        ? partial.nextDueAt == null || !Number.isFinite(partial.nextDueAt as number)
+          ? null
+          : (partial.nextDueAt as number)
+        : cur.nextDueAt,
+  };
+  await songloft.storage.set(LOVED_SCHEDULE_KEY, next);
+  return next;
+}

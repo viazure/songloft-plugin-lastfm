@@ -194,10 +194,25 @@
     <label for="lovedPlaylistName">Loved 歌单名</label>
     <input id="lovedPlaylistName" type="text" placeholder="Last.fm Loved" />
     <div id="lovedSyncLast" class="muted" style="margin-top:8px">上次：尚未同步过</div>
+    <div id="lovedSyncNext" class="muted" style="margin-top:4px">下次：—</div>
     <div class="row" style="margin-top:10px">
       <button type="button" id="btnSyncLoved">同步 Loved 到歌单</button>
       <button type="button" class="secondary" id="btnSaveLovedName">保存歌单名</button>
     </div>
+    <div class="row" style="margin-top:12px; align-items:center; gap:12px; flex-wrap:wrap">
+      <label style="display:flex; align-items:center; gap:6px; margin:0">
+        <input id="lovedScheduleEnabled" type="checkbox" />
+        定时同步 Loved 歌单
+      </label>
+      <label for="lovedScheduleIntervalHours" style="margin:0">间隔</label>
+      <select id="lovedScheduleIntervalHours">
+        <option value="6">6 小时</option>
+        <option value="12">12 小时</option>
+        <option value="24" selected>24 小时</option>
+      </select>
+      <button type="button" class="secondary" id="btnSaveLovedSchedule">保存定时</button>
+    </div>
+    <p class="muted" style="margin-top:6px">默认关闭。打开后按间隔自动覆盖刷新（与手动同步同一套）；与 keep-alive / onlyMiot 无关。断连到点仍会尝试，失败写入观测，不关开关。</p>
   </div>
 <!-- 2b. 最近 scrobble 观测 -->
   <div class="card" id="section-recent">

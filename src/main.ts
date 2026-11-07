@@ -2,13 +2,30 @@ import type { HTTPRequest, HTTPResponse } from "@songloft/plugin-sdk";
 import { handleHTTP } from "./router";
 import { refreshScrobbler, subscribePlayEvents, unsubscribePlayEvents } from "./engine";
 import { ensureHostKeepAlive } from "./keepalive";
-import { loadSettings, publicStatus } from "./store";
+import { lovedScheduler } from "./loved-schedule";
+import { bindLovedScheduleTick } from "./loved-sync-run";
+import { loadLovedSchedule, loadSettings, publicStatus, saveLovedSchedule } from "./store";
 
 async function onInit(): Promise<void> {
   const settings = await loadSettings();
   const status = publicStatus(settings);
   await refreshScrobbler();
   subscribePlayEvents();
+
+  // Loved schedule: plugin-local timer only (not keep-alive / miot cron).
+  lovedScheduler.setPersist(async (st) => {
+    await saveLovedSchedule(st);
+  });
+  bindLovedScheduleTick();
+  const savedSchedule = await loadLovedSchedule();
+  await lovedScheduler.applyState(savedSchedule, { rearm: true, persist: false });
+  if (savedSchedule.enabled) {
+    songloft.log.info(
+      `[lastfm] loved schedule armed: every ${savedSchedule.intervalHours}h; nextDue=${
+        savedSchedule.nextDueAt ? new Date(savedSchedule.nextDueAt).toISOString() : "(pending)"
+      }`
+    );
+  }
 
   // Prevent idle unload from dropping play-event subscription (scrobble gaps).
   // Host does not wake onPlayEvent subscribers; keep-alive whitelist is the fix.
@@ -38,6 +55,7 @@ async function onInit(): Promise<void> {
 }
 
 async function onDeinit(): Promise<void> {
+  lovedScheduler.dispose();
   unsubscribePlayEvents();
   songloft.log.info("[lastfm] stopped");
 }
