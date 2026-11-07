@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/songloft-org/plugin-toolchain/main/schemas/plugin.schema.json",
+  "name": "Last.fm",
+  "version": "0.1.9",
+  "description": "Songloft 对接 Last.fm：播放记录（Scrobble）",
+  "author": "viazure",
+  "homepage": "https://github.com/viazure/songloft-plugin-lastfm",
+  "license": "Apache-2.0",
+  "entryPath": "lastfm",
+  "main": "main.js",
+  "minHostVersion": "2.8.0",
+  "permissions": [
+    "storage",
+    "songs.read"
+  ],
+  "updateUrl": "https://raw.githubusercontent.com/viazure/songloft-plugin-lastfm/main/plugin.json",
+  "download_url": "https://github.com/viazure/songloft-plugin-lastfm/releases/download/v0.1.9/lastfm.jsplugin.zip",
+  "entryHash": "1286088a42dd0ae769427f9e076d20b1afcdc263dcc1cf03e67bc43341a4d073",
+  "zipHash": "af124780843252a4461b879ad96bf1e3860ddfee81e94a5a655d6e1e0d231a13",
+  "icon": "icon.png"
+}

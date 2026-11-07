@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Last.fm</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 16px; max-width: 760px; }
+    h1 { font-size: 1.3rem; margin: 0 0 4px; }
+    h2 { font-size: 1rem; margin: 0; font-weight: 650; }
+    .muted { opacity: .7; font-size: .9rem; }
+    .card { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 12px; padding: 14px; margin: 12px 0; }
+    label { display: block; font-size: .85rem; margin: 10px 0 4px; }
+    input[type=text], input[type=password], input[type=number] {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); background: Canvas; color: CanvasText;
+    }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+    button { padding: 8px 12px; border-radius: 8px; border: 0; cursor: pointer; background: #b90000; color: #fff; }
+    button.secondary { background: color-mix(in srgb, CanvasText 14%, Canvas); color: CanvasText; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.cta-pulse { box-shadow: 0 0 0 3px color-mix(in srgb, #b90000 35%, transparent); }
+    .status-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+      padding: 12px 14px; border-radius: 12px;
+      border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+      background: color-mix(in srgb, CanvasText 6%, Canvas);
+    }
+    .status-bar.ok { border-color: color-mix(in srgb, #0a7a32 45%, transparent); background: color-mix(in srgb, #0a7a32 10%, Canvas); }
+    .status-bar.warn { border-color: color-mix(in srgb, #a15c00 45%, transparent); background: color-mix(in srgb, #a15c00 10%, Canvas); }
+    .status-bar.err { border-color: color-mix(in srgb, #b00020 45%, transparent); background: color-mix(in srgb, #b00020 10%, Canvas); }
+    .status-main { font-weight: 650; font-size: 1rem; }
+    .status-sub { font-size: .85rem; opacity: .75; margin-top: 2px; }
+    .status-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ok { color: #0a7a32; } .warn { color: #a15c00; } .err { color: #b00020; }
+    pre { white-space: pre-wrap; word-break: break-word; font-size: .8rem; max-height: 260px; overflow: auto; margin: 8px 0 0; }
+    .check { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; }
+    .check label { margin: 0; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
+    details.block { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 12px; padding: 0; margin: 12px 0; }
+    details.block > summary {
+      cursor: pointer; list-style: none; padding: 14px; font-weight: 650; font-size: 1rem;
+      display: flex; align-items: center; gap: 8px; user-select: none;
+    }
+    details.block > summary::-webkit-details-marker { display: none; }
+    details.block > summary::before { content: "▸"; opacity: .55; }
+    details.block[open] > summary::before { content: "▾"; }
+    details.block .body { padding: 0 14px 14px; }
+    .hint { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, #b90000 10%, Canvas); font-size: .9rem; }
+    .hint.hidden { display: none; }
+    .connect-panel.hidden { display: none; }
+    .connect-waiting {
+      margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+      border: 1px dashed color-mix(in srgb, #b90000 40%, transparent);
+      background: color-mix(in srgb, #b90000 8%, Canvas);
+      font-size: .9rem;
+    }
+    .connect-waiting.hidden { display: none; }
+    .connect-waiting a { word-break: break-all; }
+    #flash { margin: 8px 0 0; font-size: .9rem; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>Last.fm</h1>
+  <p class="muted">应用凭证证明 App 是谁；连接账号才允许往你的 Last.fm 记播放。</p>
+
+  <div id="statusBar" class="status-bar warn">
+    <div>
+      <div id="statusMain" class="status-main">加载中…</div>
+      <div id="statusSub" class="status-sub"></div>
+    </div>
+    <div class="status-actions">
+      <button type="button" id="btnConnectCta">连接账号</button>
+      <button type="button" class="secondary" id="btnDisconnect" hidden>断开连接</button>
+    </div>
+  </div>
+  <div id="flash" class="muted"></div>
+
+  <!-- 1. 连接账号：未连接展开；已连接整块隐藏。必须在播放记录之上 -->
+  <div class="card connect-panel" id="connectPanel">
+    <h2>连接账号</h2>
+    <p class="muted">点上方「连接账号」会打开 Last.fm 网页并自动完成；也可在下方用用户名密码。</p>
+
+    <div id="connectWaiting" class="connect-waiting hidden">
+      <div id="connectWaitingText">正在等待网页授权…</div>
+      <div class="row" style="margin-top:8px">
+        <button type="button" id="btnFinishNow" class="secondary">我已允许，完成连接</button>
+        <button type="button" id="btnCancelWait" class="secondary">取消</button>
+      </div>
+    </div>
+
+    <details class="block" id="altLogin" style="margin:12px 0 0;border-style:dashed">
+      <summary style="font-size:.95rem">改用用户名密码连接</summary>
+      <div class="body">
+        <p class="muted">密码仅用于一次登录，不落盘。</p>
+        <label>Last.fm 用户名</label>
+        <input id="username" type="text" autocomplete="username" />
+        <label>密码</label>
+        <input id="password" type="password" autocomplete="current-password" />
+        <div class="row">
+          <button type="button" id="btnLogin" class="secondary">用户名密码连接</button>
+        </div>
+      </div>
+    </details>
+    <p id="authHint" class="muted"></p>
+  </div>
+
+  <!-- 2. 播放记录 -->
+  <div class="card" id="section-scrobble">
+    <h2>播放记录（Scrobble）</h2>
+    <p class="muted">不必听完整首：达到「百分比」与「最长秒数」中<strong>较早</strong>者即可在 <code>finish</code>/<code>skip</code> 时记录。</p>
+    <div class="check">
+      <input id="enabled" type="checkbox" checked />
+      <label for="enabled">启用播放记录 <span id="enabledHint" class="muted"></span></label>
+    </div>
+    <div class="check"><input id="onlyMiot" type="checkbox" /><label for="onlyMiot">只同步 source=miot（智能音箱）</label></div>
+    <div class="grid2">
+      <div>
+        <label>记录歌曲最短时长（秒）</label>
+        <input id="minDurationSec" type="number" min="0" max="3600" step="1" value="30" />
+      </div>
+      <div>
+        <label>记录延迟 · 百分比（%）</label>
+        <input id="delayPercent" type="number" min="1" max="100" step="1" value="50" />
+      </div>
+      <div>
+        <label>记录延迟 · 最长（秒）</label>
+        <input id="delayMaxSec" type="number" min="1" max="3600" step="1" value="240" />
+      </div>
+    </div>
+    <div class="check"><input id="earlyOnThreshold" type="checkbox" checked /><label for="earlyOnThreshold">半数到达后立即 scrobble（普通播放有用；音箱/miot 常无中途进度，通常仍播完才记）</label></div>
+    <div class="row">
+      <button id="btnSave">保存播放记录设置</button>
+      <button class="secondary" id="btnReload">刷新状态</button>
+    </div>
+  </div>
+
+  <!-- 3. 应用凭证（高级） -->
+  <details class="block" id="section-creds">
+    <summary>应用凭证（高级）</summary>
+    <div class="body">
+      <p class="muted">这是 <strong>App 身份</strong>（API Key / Shared Secret），不是 Last.fm 登录。到 <a href="https://www.last.fm/api/account/create" target="_blank" rel="noreferrer">创建应用</a> 获取。密钥只存本机，不会写入日志。</p>
+      <label>API Key（留空则不改已保存的）</label>
+      <input id="apiKey" type="password" autocomplete="off" placeholder="已保存则留空不改" />
+      <label>Shared Secret（留空则不改已保存的）</label>
+      <input id="apiSecret" type="password" autocomplete="new-password" placeholder="已保存则显示为占位" />
+      <label>Session Key（可选：已有 session 可直接粘贴；留空不改）</label>
+      <input id="sessionKey" type="password" autocomplete="off" placeholder="可选" />
+      <div class="row">
+        <button id="btnSaveAuth" class="secondary">保存应用凭证</button>
+      </div>
+      <div id="credsNextHint" class="hint hidden">凭证已保存。下一步：点上方「连接账号」。</div>
+    </div>
+  </details>
+
+  <details class="block" id="section-diag">
+    <summary>诊断</summary>
+    <div class="body">
+      <p class="muted">不依赖音箱的手动探测。请勿短时间反复点击，以免触发 Last.fm 限流。</p>
+      <div class="row">
+        <button class="secondary" id="btnNp">测 Now Playing</button>
+        <button class="secondary" id="btnSc">测 Scrobble</button>
+        <button class="secondary" id="btnReload2">刷新日志</button>
+      </div>
+      <label>最近日志</label>
+      <pre id="logBox">-</pre>
+    </div>
+  </details>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
+
+
