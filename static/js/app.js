@@ -244,11 +244,13 @@ async function refresh(opts) {
   updateLoveCurrent(st.lastPlay);
 
   const loveDisabled = connectionState((st && st.status) || {}) !== "connected";
-  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved", "btnSaveLovedName"].forEach((id) => {
+  // P3: playlist name can be saved while disconnected; sync/love still need session.
+  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved"].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = loveDisabled;
   });
-  if ($("lovedPlaylistName")) $("lovedPlaylistName").disabled = loveDisabled;
+  if ($("lovedPlaylistName")) $("lovedPlaylistName").disabled = false;
+  if ($("btnSaveLovedName")) $("btnSaveLovedName").disabled = false;
 
   if (options.flash) setFlash(options.flash, options.flashCls || "muted");
   else if (!options.keepFlash) setFlash("");
