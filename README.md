@@ -10,6 +10,13 @@ Songloft 插件：把播放同步到 [Last.fm](https://www.last.fm/)（scrobble 
 
 社区插件，**未经 Songloft 官方审核**。安装前请自行确认。
 
+## 保活说明（重要）
+
+Songloft 会在空闲约 10 分钟后卸载 jsplugin，并清除 onPlayEvent 订阅；**播放事件不会自动唤醒**已卸载的插件（与歌词插件不同），因此可能漏 scrobble。
+
+本插件在 onInit 会尽量把自身写入宿主 `/api/v1/settings/plugin-keep-alive` 白名单（与 `miot` 同类）。若自注册失败，请在 Songloft 设置里把 `lastfm` 加入该白名单。真正的「仅播放时保活、空闲可卸 + 事件唤醒」需要宿主改动，本仓不改 Songloft 本体。
+
+
 ## 安装
 
 ### 从 Songloft「GitHub 发现」
@@ -60,3 +67,4 @@ npm run build
 ## License
 
 [Apache-2.0](./LICENSE)
+

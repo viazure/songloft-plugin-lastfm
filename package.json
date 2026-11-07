@@ -1,6 +1,6 @@
 {
   "name": "lastfm",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Songloft <-> Last.fm: scrobble / now playing",
   "private": true,
   "scripts": {
