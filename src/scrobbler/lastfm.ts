@@ -143,4 +143,28 @@ export class LastFmScrobbler implements Scrobbler {
     }
     await post(params, this.creds.apiSecret);
   }
+
+  async love(artist: string, track: string): Promise<void> {
+    if (!(await this.isReady())) throw new Error("Last.FM not authorized");
+    const params: ParamMap = {
+      method: "track.love",
+      api_key: this.creds.apiKey,
+      sk: this.creds.sessionKey!,
+      artist,
+      track,
+    };
+    await post(params, this.creds.apiSecret);
+  }
+
+  async unlove(artist: string, track: string): Promise<void> {
+    if (!(await this.isReady())) throw new Error("Last.FM not authorized");
+    const params: ParamMap = {
+      method: "track.unlove",
+      api_key: this.creds.apiKey,
+      sk: this.creds.sessionKey!,
+      artist,
+      track,
+    };
+    await post(params, this.creds.apiSecret);
+  }
 }

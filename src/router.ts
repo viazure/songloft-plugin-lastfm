@@ -1,7 +1,7 @@
 import { createRouter, jsonResponse } from "@songloft/plugin-sdk";
 import type { HTTPRequest, HTTPResponse } from "@songloft/plugin-sdk";
 import { LastFmScrobbler } from "./scrobbler";
-import { refreshScrobbler, getScrobbler } from "./engine";
+import { refreshScrobbler, getScrobbler, getLastPlayCache } from "./engine";
 import {
   appendLog,
   appendScrobbleRecord,
@@ -51,6 +51,7 @@ router.get("/api/status", async () => {
     ok: true,
     status: publicStatus(settings),
     message: statusMessage(settings),
+    lastPlay: getLastPlayCache(),
   });
 });
 
@@ -291,6 +292,117 @@ router.post("/api/test/scrobble", async (req) => {
     await appendLog("error", `test scrobble failed: ${msg}`);
     return jsonResponse({ ok: false, error: msg }, 400);
   }
+});
+
+/** Resolve artist/title: body override, else last play cache. */
+function resolveTrack(body: Record<string, unknown>): { artist: string; title: string } | { error: string } {
+  const bodyArtist = typeof body.artist === "string" ? body.artist.trim() : "";
+  const bodyTitle = typeof body.title === "string" ? body.title.trim() : "";
+  if (bodyArtist && bodyTitle) {
+    return { artist: bodyArtist, title: bodyTitle };
+  }
+  const cached = getLastPlayCache();
+  if (cached?.artist && cached?.title) {
+    return { artist: cached.artist, title: cached.title };
+  }
+  return { error: "没有当前曲：先听一首歌，或在请求里带上 artist 与 title" };
+}
+
+/**
+ * Manual love/unlove — independent of onlyMiot / early scrobble / flush / keep-alive.
+ * Explicit user action; does not require settings.enabled.
+ */
+async function handleLoveAction(
+  req: HTTPRequest,
+  kind: "love" | "unlove"
+): Promise<HTTPResponse> {
+  const body = readJson(req);
+  const track = resolveTrack(body);
+  if ("error" in track) {
+    return jsonResponse({ ok: false, error: track.error }, 400);
+  }
+  const { artist, title } = track;
+  await refreshScrobbler();
+  const client = getScrobbler();
+  if (!client || !(await client.isReady())) {
+    await appendScrobbleRecord({
+      title,
+      artist,
+      ok: false,
+      reason: "尚未连接账号",
+      path: kind,
+      source: "manual",
+    });
+    return jsonResponse({ ok: false, error: "尚未连接账号：需要应用凭证 + 已连接的账号" }, 400);
+  }
+  try {
+    if (kind === "love") {
+      await client.love(artist, title);
+    } else {
+      await client.unlove(artist, title);
+    }
+    await appendScrobbleRecord({
+      title,
+      artist,
+      ok: true,
+      path: kind,
+      source: "manual",
+    });
+    await appendLog("info", `${kind}: ${artist} - ${title}`);
+    return jsonResponse({ ok: true, artist, title, action: kind });
+  } catch (e) {
+    if (isInvalidSessionError(e)) {
+      await markSessionInvalid();
+      await refreshScrobbler();
+    }
+    const msg = friendlyLastFmError(e);
+    await appendScrobbleRecord({
+      title,
+      artist,
+      ok: false,
+      reason: msg,
+      path: kind,
+      source: "manual",
+    });
+    await appendLog("error", `${kind} failed: ${msg}`);
+    return jsonResponse({ ok: false, error: msg, artist, title, action: kind }, 400);
+  }
+}
+
+router.post("/api/love", async (req) => handleLoveAction(req, "love"));
+router.post("/api/unlove", async (req) => handleLoveAction(req, "unlove"));
+
+/** Manual probe with explicit artist/title (defaults like other test endpoints). */
+router.post("/api/test/love", async (req) => {
+  const body = readJson(req);
+  const artist =
+    typeof body.artist === "string" && body.artist.trim()
+      ? body.artist.trim()
+      : "Songloft Test";
+  const title =
+    typeof body.title === "string" && body.title.trim()
+      ? body.title.trim()
+      : "Love Probe";
+  return handleLoveAction(
+    { ...req, body: { ...body, artist, title } } as HTTPRequest,
+    "love"
+  );
+});
+
+router.post("/api/test/unlove", async (req) => {
+  const body = readJson(req);
+  const artist =
+    typeof body.artist === "string" && body.artist.trim()
+      ? body.artist.trim()
+      : "Songloft Test";
+  const title =
+    typeof body.title === "string" && body.title.trim()
+      ? body.title.trim()
+      : "Love Probe";
+  return handleLoveAction(
+    { ...req, body: { ...body, artist, title } } as HTTPRequest,
+    "unlove"
+  );
 });
 
 export async function handleHTTP(req: HTTPRequest): Promise<HTTPResponse> {

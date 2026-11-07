@@ -147,7 +147,7 @@ export interface ScrobbleRecord {
   /** Human-readable failure reason (never secrets). Optional path hint on success. */
   reason?: string;
   source?: string;
-  /** early-threshold | finish | skip | test */
+  /** early-threshold | finish | skip | switch | replay | nowplaying | test | love | unlove */
   path?: string;
 }
 

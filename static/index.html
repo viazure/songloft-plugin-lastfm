@@ -155,10 +155,41 @@
   </div>
 
 
+
+  <!-- 2a. 红心（Last.fm love，单向手动） -->
+  <div class="card" id="section-love">
+    <h2>红心（Last.fm）</h2>
+    <p class="muted">把<strong>最近一次开始播放</strong>的曲子标成喜欢 / 取消喜欢。只写到 Last.fm，不会改 Songloft 里的红心。手动操作不受「只同步音箱」限制。</p>
+    <div id="loveCurrent" class="muted" style="margin-top:8px">当前曲：还没有播放记录。先听一首，或下面手动填。</div>
+    <div class="row">
+      <button type="button" id="btnLove">红心当前曲</button>
+      <button type="button" class="secondary" id="btnUnlove">取消红心</button>
+    </div>
+    <details class="block" style="margin:12px 0 0;border-style:dashed">
+      <summary style="font-size:.95rem">手动指定曲目（探测）</summary>
+      <div class="body">
+        <div class="grid2">
+          <div>
+            <label>艺人</label>
+            <input id="loveArtist" type="text" placeholder="Artist" />
+          </div>
+          <div>
+            <label>曲名</label>
+            <input id="loveTitle" type="text" placeholder="Title" />
+          </div>
+        </div>
+        <div class="row">
+          <button type="button" class="secondary" id="btnLoveProbe">探测红心</button>
+          <button type="button" class="secondary" id="btnUnloveProbe">探测取消红心</button>
+        </div>
+      </div>
+    </details>
+  </div>
+
   <!-- 2b. 最近 scrobble 观测 -->
   <div class="card" id="section-recent">
     <h2>最近记录</h2>
-    <p class="muted">本机最近成功 / 失败的 scrobble（最多 20 条），方便排查「没记上」。密钥不会出现在这里。</p>
+    <p class="muted">本机最近成功 / 失败的 scrobble 与红心操作（最多 20 条），方便排查。密钥不会出现在这里。</p>
     <div class="row" style="margin-top:8px">
       <button type="button" class="secondary" id="btnReloadScrobbles">刷新记录</button>
     </div>
@@ -190,6 +221,8 @@
       <div class="row">
         <button class="secondary" id="btnNp">测 Now Playing</button>
         <button class="secondary" id="btnSc">测 Scrobble</button>
+        <button class="secondary" id="btnLoveTest">测红心</button>
+        <button class="secondary" id="btnUnloveTest">测取消红心</button>
         <button class="secondary" id="btnReload2">刷新日志</button>
       </div>
       <label>最近日志</label>

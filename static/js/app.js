@@ -28,6 +28,8 @@ const PATH_LABEL = {
   replay: "重播前达标",
   nowplaying: "正在播放",
   test: "手动探测",
+  love: "红心",
+  unlove: "取消红心",
 };
 
 function pathLabel(path) {
@@ -74,6 +76,30 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+
+function updateLoveCurrent(lastPlay) {
+  const el = $("loveCurrent");
+  if (!el) return;
+  if (lastPlay && lastPlay.artist && lastPlay.title) {
+    const when = lastPlay.atMs ? (" · " + new Date(lastPlay.atMs).toLocaleString()) : "";
+    const src = lastPlay.source ? (" · " + lastPlay.source) : "";
+    el.textContent = "当前曲：" + lastPlay.artist + " — " + lastPlay.title + when + src;
+  } else {
+    el.textContent = "当前曲：还没有播放记录。先听一首，或下面手动填。";
+  }
+}
+
+async function doLove(kind, opts) {
+  const options = opts || {};
+  const body = {};
+  if (options.artist) body.artist = options.artist;
+  if (options.title) body.title = options.title;
+  const pathApi = kind === "love" ? "/api/love" : "/api/unlove";
+  const res = await apiPost(pathApi, body);
+  if (!res.ok) throw new Error(res.error || "failed");
+  return res;
 }
 
 async function loadScrobbles() {
@@ -198,6 +224,13 @@ async function refresh(opts) {
   $("delayMaxSec").value = settings.delayMaxSec ?? 240;
 
   applyConnectionUI(st, settings);
+  updateLoveCurrent(st.lastPlay);
+
+  const loveDisabled = connectionState((st && st.status) || {}) !== "connected";
+  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest"].forEach((id) => {
+    const b = $(id);
+    if (b) b.disabled = loveDisabled;
+  });
 
   if (options.flash) setFlash(options.flash, options.flashCls || "muted");
   else if (!options.keepFlash) setFlash("");
@@ -390,6 +423,69 @@ $("btnSc").onclick = async () => {
     await refresh({ flash: "Scrobble 探测已发送", flashCls: "ok" });
   } catch (e) {
     setFlash("Scrobble 失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+};
+
+
+$("btnLove").onclick = async () => {
+  try {
+    const res = await doLove("love");
+    await refresh({ flash: "已红心：" + res.artist + " — " + res.title, flashCls: "ok" });
+  } catch (e) {
+    setFlash("红心失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+};
+
+$("btnUnlove").onclick = async () => {
+  try {
+    const res = await doLove("unlove");
+    await refresh({ flash: "已取消红心：" + res.artist + " — " + res.title, flashCls: "ok" });
+  } catch (e) {
+    setFlash("取消红心失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+};
+
+async function loveProbe(kind) {
+  const artist = $("loveArtist").value.trim();
+  const title = $("loveTitle").value.trim();
+  if (!artist || !title) {
+    setFlash("请填写艺人与曲名，或先播放一首歌后用上方按钮。", "warn");
+    return;
+  }
+  try {
+    const res = await doLove(kind, { artist, title });
+    const verb = kind === "love" ? "已红心" : "已取消红心";
+    await refresh({ flash: verb + "：" + res.artist + " — " + res.title, flashCls: "ok" });
+  } catch (e) {
+    setFlash((kind === "love" ? "红心" : "取消红心") + "失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+}
+
+$("btnLoveProbe").onclick = () => loveProbe("love");
+$("btnUnloveProbe").onclick = () => loveProbe("unlove");
+
+$("btnLoveTest").onclick = async () => {
+  try {
+    const res = await apiPost("/api/test/love", {});
+    if (!res.ok) throw new Error(res.error || "failed");
+    await refresh({ flash: "红心探测已发送：" + res.artist + " — " + res.title, flashCls: "ok" });
+  } catch (e) {
+    setFlash("红心探测失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+};
+
+$("btnUnloveTest").onclick = async () => {
+  try {
+    const res = await apiPost("/api/test/unlove", {});
+    if (!res.ok) throw new Error(res.error || "failed");
+    await refresh({ flash: "取消红心探测已发送：" + res.artist + " — " + res.title, flashCls: "ok" });
+  } catch (e) {
+    setFlash("取消红心探测失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
   }
 };

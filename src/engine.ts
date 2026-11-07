@@ -37,6 +37,31 @@ interface ActivePlay {
 let scrobbler: LastFmScrobbler | null = null;
 const active = new Map<number, ActivePlay>();
 
+/** Latest play cache for manual love/unlove (independent of onlyMiot). */
+export interface LastPlayCache {
+  title: string;
+  artist: string;
+  songId?: number;
+  source?: string;
+  atMs: number;
+}
+
+let lastPlayCache: LastPlayCache | null = null;
+
+export function getLastPlayCache(): LastPlayCache | null {
+  return lastPlayCache ? { ...lastPlayCache } : null;
+}
+
+function rememberLastPlay(input: { title: string; artist: string; songId?: number; source?: string }): void {
+  lastPlayCache = {
+    title: input.title || "Unknown",
+    artist: input.artist || "Unknown",
+    songId: input.songId,
+    source: input.source,
+    atMs: Date.now(),
+  };
+}
+
 export async function refreshScrobbler(): Promise<LastFmScrobbler | null> {
   const s = await loadSettings();
   if (!s.apiKey || !s.apiSecret) {
@@ -210,15 +235,21 @@ async function flushAbandonedPlay(
 }
 
 export async function handlePlayEvent(event: PlayEvent): Promise<void> {
-  const settings = await loadSettings();
-  if (!settings.enabled) return;
-  if (settings.onlyMiot && event.source !== "miot") return;
-
   const title = event.song.title || "Unknown";
   const artist = event.song.artist || "Unknown";
   const source = event.source || "unknown";
   const songId = event.song.id;
   const startedAtSec = eventUnixSec(event);
+
+  // Always remember latest play for manual love/unlove (not gated by onlyMiot/enabled).
+  if (event.type === "play") {
+    rememberLastPlay({ title, artist, songId, source });
+  }
+
+  const settings = await loadSettings();
+  if (!settings.enabled) return;
+  if (settings.onlyMiot && event.source !== "miot") return;
+
   const rules = rulesFromSettings(settings);
 
   if (!(await refreshScrobbler()) || !(await scrobbler!.isReady())) {
@@ -358,6 +389,7 @@ export function subscribePlayEvents(): void {
 export function unsubscribePlayEvents(): void {
   for (const play of active.values()) clearEarly(play);
   active.clear();
+  lastPlayCache = null;
   songloft.events.offPlayEvent();
 }
 
