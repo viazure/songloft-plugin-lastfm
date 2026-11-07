@@ -2,10 +2,21 @@ const { apiGet, apiPost } = SongloftPlugin;
 
 function $(id) { return document.getElementById(id); }
 
+/** Mirror store.stripSecrets — keep secrets out of flash even if API slips. */
+function stripSecrets(raw) {
+  let s = String(raw ?? "");
+  s = s.replace(/[a-fA-F0-9]{32,}/g, "[已隐藏]");
+  s = s.replace(
+    /\b(api[_-]?key|api[_-]?secret|shared[_-]?secret|session[_-]?key|password|token|sk)\b\s*[:=]\s*\S+/gi,
+    "$1=[已隐藏]"
+  );
+  return s;
+}
+
 function setFlash(text, cls) {
   const el = $("flash");
   el.className = cls || "muted";
-  el.textContent = text || "";
+  el.textContent = text ? stripSecrets(String(text)) : "";
 }
 
 
@@ -70,7 +81,7 @@ async function loadScrobbles() {
 
 
 function friendlyLogMessage(msg) {
-  const s = String(msg || "");
+  const s = stripSecrets(String(msg || ""));
   if (/Invalid session key|error\s*9\b|连接已失效/i.test(s)) {
     return "连接已失效，请重新连接账号";
   }

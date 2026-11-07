@@ -170,6 +170,15 @@ export async function handlePlayEvent(event: PlayEvent): Promise<void> {
 
   if (!(await refreshScrobbler()) || !(await scrobbler!.isReady())) {
     songloft.log.info(`[lastfm] skip ${event.type}: not connected`);
+    // Diagnose "没记上": surface disconnected early-return in 最近记录.
+    await appendScrobbleRecord({
+      title,
+      artist,
+      ok: false,
+      reason: "尚未连接账号",
+      source,
+      path: event.type,
+    });
     return;
   }
 
