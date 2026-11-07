@@ -8,6 +8,67 @@ function setFlash(text, cls) {
   el.textContent = text || "";
 }
 
+
+const PATH_LABEL = {
+  "early-threshold": "提前阈值",
+  finish: "播完",
+  skip: "跳过时达标",
+  test: "手动探测",
+};
+
+function pathLabel(path) {
+  if (!path) return "";
+  return PATH_LABEL[path] || path;
+}
+
+function renderScrobbles(records) {
+  const box = $("scrobbleList");
+  if (!box) return;
+  const list = Array.isArray(records) ? records.slice().reverse() : [];
+  if (!list.length) {
+    box.innerHTML = '<div class="scrobble-empty">暂无记录。听几首歌或点「测 Scrobble」后会出现在这里。</div>';
+    return;
+  }
+  box.innerHTML = list.map((r) => {
+    const t = new Date(r.ts).toLocaleString();
+    const ok = !!r.ok;
+    const badge = ok
+      ? '<span class="badge ok">成功</span>'
+      : '<span class="badge err">失败</span>';
+    const title = escapeHtml(r.title || "Unknown");
+    const artist = escapeHtml(r.artist || "Unknown");
+    const path = pathLabel(r.path);
+    const src = r.source ? (" · " + escapeHtml(r.source)) : "";
+    const meta = escapeHtml(t) + (path ? (" · " + path) : "") + src;
+    const reason = !ok && r.reason
+      ? '<div class="reason">' + escapeHtml(friendlyLogMessage(r.reason)) + '</div>'
+      : "";
+    return (
+      '<div class="scrobble-row">' +
+        '<div><strong>' + artist + '</strong> — ' + title +
+          '<div class="meta">' + meta + '</div></div>' +
+        '<div>' + badge + '</div>' +
+        reason +
+      '</div>'
+    );
+  }).join("");
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function loadScrobbles() {
+  const res = await apiGet("/api/scrobbles");
+  renderScrobbles(res.records || []);
+  return res;
+}
+
+
 function friendlyLogMessage(msg) {
   const s = String(msg || "");
   if (/Invalid session key|error\s*9\b|连接已失效/i.test(s)) {
@@ -133,6 +194,13 @@ async function refresh(opts) {
     return `[${t}] ${e.level}: ${friendlyLogMessage(e.message)}`;
   }).reverse().join("\n") || "(empty)";
 
+  try {
+    await loadScrobbles();
+  } catch (_) {
+    const box = $("scrobbleList");
+    if (box) box.innerHTML = '<div class="scrobble-empty err">记录加载失败</div>';
+  }
+
   return { st, settings };
 }
 
@@ -222,6 +290,7 @@ async function startWebConnectFlow() {
 }
 
 $("btnReload").onclick = () => refresh().catch((e) => setFlash(String(e), "err"));
+$("btnReloadScrobbles").onclick = () => loadScrobbles().catch((e) => setFlash(String(e), "err"));
 $("btnReload2").onclick = () => refresh().catch((e) => setFlash(String(e), "err"));
 
 $("btnConnectCta").onclick = () => {

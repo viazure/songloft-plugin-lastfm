@@ -4,10 +4,12 @@ import { LastFmScrobbler } from "./scrobbler";
 import { refreshScrobbler, getScrobbler } from "./engine";
 import {
   appendLog,
+  appendScrobbleRecord,
   clearSession,
   friendlyLastFmError,
   isInvalidSessionError,
   loadLog,
+  loadScrobbleRecords,
   loadSettings,
   markSessionInvalid,
   publicStatus,
@@ -226,6 +228,12 @@ router.get("/api/log", async () => {
   return jsonResponse({ ok: true, log });
 });
 
+/** Recent structured scrobble attempts (newest last; UI may reverse). */
+router.get("/api/scrobbles", async () => {
+  const records = await loadScrobbleRecords();
+  return jsonResponse({ ok: true, records, max: 20 });
+});
+
 /** Manual dry-run helpers for when speaker play events are not used yet. */
 router.post("/api/test/nowplaying", async (req) => {
   const body = readJson(req);
@@ -270,6 +278,7 @@ router.post("/api/test/scrobble", async (req) => {
       title,
       startedAtSec: Math.floor(Date.now() / 1000) - 60,
     });
+    await appendScrobbleRecord({ title, artist, ok: true, path: "test", source: "test" });
     await appendLog("info", `test scrobble: ${artist} - ${title}`);
     return jsonResponse({ ok: true });
   } catch (e) {
@@ -278,6 +287,7 @@ router.post("/api/test/scrobble", async (req) => {
       await refreshScrobbler();
     }
     const msg = friendlyLastFmError(e);
+    await appendScrobbleRecord({ title, artist, ok: false, reason: msg, path: "test", source: "test" });
     await appendLog("error", `test scrobble failed: ${msg}`);
     return jsonResponse({ ok: false, error: msg }, 400);
   }

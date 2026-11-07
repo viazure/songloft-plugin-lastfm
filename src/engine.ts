@@ -3,6 +3,7 @@ import { LastFmScrobbler } from "./scrobbler";
 import type { Listen } from "./scrobbler";
 import {
   appendLog,
+  appendScrobbleRecord,
   friendlyLastFmError,
   isInvalidSessionError,
   loadSettings,
@@ -99,12 +100,28 @@ async function doScrobble(
   if (play.scrobbled) return;
   if (!(await refreshScrobbler()) || !(await scrobbler!.isReady())) {
     songloft.log.info(`[lastfm] skip scrobble (${reason}): not connected`);
+    await appendScrobbleRecord({
+      title: play.title,
+      artist: play.artist,
+      ok: false,
+      reason: "尚未连接账号",
+      source: play.source,
+      path: reason,
+    });
+    await appendLog("warn", `scrobble skipped (not connected): ${play.artist} - ${play.title}`);
     return;
   }
   try {
     await scrobbler!.scrobble(toListen(play));
     play.scrobbled = true;
     clearEarly(play);
+    await appendScrobbleRecord({
+      title: play.title,
+      artist: play.artist,
+      ok: true,
+      source: play.source,
+      path: reason,
+    });
     await appendLog(
       "info",
       `scrobble: ${play.artist} - ${play.title} (${play.source}, ${reason})`
@@ -112,6 +129,14 @@ async function doScrobble(
     songloft.log.info(`[lastfm] scrobble ${play.artist} - ${play.title} (${reason})`);
   } catch (e) {
     const msg = await handleInvalidSession(e);
+    await appendScrobbleRecord({
+      title: play.title,
+      artist: play.artist,
+      ok: false,
+      reason: msg,
+      source: play.source,
+      path: reason,
+    });
     await appendLog("error", `scrobble failed: ${msg}`);
     songloft.log.error(`[lastfm] scrobble failed: ${msg}`);
   }

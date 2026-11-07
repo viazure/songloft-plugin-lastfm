@@ -60,6 +60,23 @@
     .connect-waiting.hidden { display: none; }
     .connect-waiting a { word-break: break-all; }
     #flash { margin: 8px 0 0; font-size: .9rem; min-height: 1.2em; }
+
+    .scrobble-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .scrobble-row {
+      display: grid; grid-template-columns: 1fr auto; gap: 6px 12px;
+      padding: 10px 12px; border-radius: 10px;
+      border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+      background: color-mix(in srgb, CanvasText 4%, Canvas);
+      font-size: .9rem;
+    }
+    .scrobble-row .meta { font-size: .8rem; opacity: .7; }
+    .scrobble-row .reason { grid-column: 1 / -1; font-size: .85rem; color: #b00020; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .75rem; font-weight: 650;
+    }
+    .badge.ok { background: color-mix(in srgb, #0a7a32 18%, Canvas); color: #0a7a32; }
+    .badge.err { background: color-mix(in srgb, #b00020 18%, Canvas); color: #b00020; }
+    .scrobble-empty { opacity: .65; font-size: .9rem; padding: 8px 0; }
   </style>
 </head>
 <body>
@@ -135,6 +152,17 @@
       <button id="btnSave">保存播放记录设置</button>
       <button class="secondary" id="btnReload">刷新状态</button>
     </div>
+  </div>
+
+
+  <!-- 2b. 最近 scrobble 观测 -->
+  <div class="card" id="section-recent">
+    <h2>最近记录</h2>
+    <p class="muted">本机最近成功 / 失败的 scrobble（最多 20 条），方便排查「没记上」。密钥不会出现在这里。</p>
+    <div class="row" style="margin-top:8px">
+      <button type="button" class="secondary" id="btnReloadScrobbles">刷新记录</button>
+    </div>
+    <div id="scrobbleList" class="scrobble-list"><div class="scrobble-empty">加载中…</div></div>
   </div>
 
   <!-- 3. 应用凭证（高级） -->
