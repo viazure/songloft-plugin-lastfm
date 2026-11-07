@@ -30,6 +30,7 @@ const PATH_LABEL = {
   test: "手动探测",
   love: "红心",
   unlove: "取消红心",
+  loved_playlist_sync: "Loved歌单",
 };
 
 function pathLabel(path) {
@@ -102,6 +103,19 @@ async function doLove(kind, opts) {
   return res;
 }
 
+
+async function loadLovedSync() {
+  const el = $("lovedSyncLast");
+  if (!el) return null;
+  try {
+    const res = await apiGet("/api/loved-playlist");
+    el.textContent = "上次：" + (res.summary || "尚未同步过");
+    return res;
+  } catch (e) {
+    el.textContent = "上次：无法读取（" + friendlyLogMessage(e.message) + "）";
+    return null;
+  }
+}
 async function loadScrobbles() {
   const res = await apiGet("/api/scrobbles");
   renderScrobbles(res.records || []);
@@ -243,6 +257,7 @@ async function refresh(opts) {
 
   try {
     await loadScrobbles();
+  await loadLovedSync();
   } catch (_) {
     const box = $("scrobbleList");
     if (box) box.innerHTML = '<div class="scrobble-empty err">记录加载失败</div>';
@@ -468,6 +483,25 @@ async function loveProbe(kind) {
 $("btnLoveProbe").onclick = () => loveProbe("love");
 $("btnUnloveProbe").onclick = () => loveProbe("unlove");
 
+
+$("btnSyncLoved").onclick = async () => {
+  const btn = $("btnSyncLoved");
+  btn.disabled = true;
+  try {
+    setFlash("正在同步 Loved 到歌单…", "muted");
+    const res = await apiPost("/api/loved-playlist/sync", {});
+    if (!res.ok) throw new Error(res.error || "同步失败");
+    await refresh({
+      flash: "Loved 歌单已更新：" + (res.summary || ""),
+      flashCls: "ok",
+    });
+  } catch (e) {
+    setFlash("Loved 同步失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  } finally {
+    btn.disabled = false;
+  }
+};
 $("btnLoveTest").onclick = async () => {
   try {
     const res = await apiPost("/api/test/love", {});
@@ -493,4 +527,6 @@ $("btnUnloveTest").onclick = async () => {
 document.addEventListener("DOMContentLoaded", () => {
   refresh().catch((e) => setFlash(String(e), "err"));
 });
+
+
 

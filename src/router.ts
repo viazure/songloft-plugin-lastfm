@@ -9,12 +9,15 @@ import {
   friendlyLastFmError,
   isInvalidSessionError,
   loadLog,
+  loadLovedPlaylistSync,
   loadScrobbleRecords,
   loadSettings,
   markSessionInvalid,
   publicStatus,
+  saveLovedPlaylistSync,
   saveSettings,
 } from "./store";
+import { formatLovedSyncSummary, syncLovedToPlaylist } from "./loved-playlist";
 
 const router = createRouter();
 
@@ -405,6 +408,125 @@ router.post("/api/test/unlove", async (req) => {
   );
 });
 
+
+/** Last loved→playlist sync summary for settings page. */
+router.get("/api/loved-playlist", async () => {
+  const last = await loadLovedPlaylistSync();
+  return jsonResponse({
+    ok: true,
+    last,
+    summary: formatLovedSyncSummary(last),
+  });
+});
+
+/**
+ * Sync Last.fm loved tracks into Songloft playlist "Last.fm Loved".
+ * Explicit user action — not gated by onlyMiot; isolated from scrobble/flush/keep-alive.
+ */
+router.post("/api/loved-playlist/sync", async () => {
+  await refreshScrobbler();
+  const settings = await loadSettings();
+  const client = getScrobbler();
+  if (!client || !(await client.isReady()) || !settings.username) {
+    const reason = !settings.username
+      ? "尚未连接账号（缺少用户名）"
+      : "尚未连接账号：需要应用凭证 + 已连接的账号";
+    const fail = {
+      ts: Date.now(),
+      ok: false as const,
+      loved: 0,
+      matched: 0,
+      unmatched: 0,
+      reason,
+    };
+    await saveLovedPlaylistSync(fail);
+    await appendScrobbleRecord({
+      title: "Last.fm Loved",
+      artist: "playlist",
+      ok: false,
+      reason,
+      path: "loved_playlist_sync",
+      source: "manual",
+    });
+    return jsonResponse({ ok: false, error: reason, last: fail, summary: formatLovedSyncSummary(fail) }, 400);
+  }
+
+  // songloft.songs / songloft.playlists are host bridge APIs (need playlists.* perms).
+  const result = await syncLovedToPlaylist({
+    scrobbler: client,
+    username: settings.username,
+    songsApi: songloft.songs,
+    playlistsApi: songloft.playlists,
+  });
+
+  if (!result.ok) {
+    if (isInvalidSessionError(result.reason)) {
+      await markSessionInvalid();
+      await refreshScrobbler();
+    }
+    const reason = friendlyLastFmError(result.reason);
+    const stored = await saveLovedPlaylistSync({ ...result, reason });
+    await appendScrobbleRecord({
+      title: "Last.fm Loved",
+      artist: "playlist",
+      ok: false,
+      reason,
+      path: "loved_playlist_sync",
+      source: "manual",
+    });
+    await appendLog("error", `loved playlist sync failed: ${reason}`);
+    return jsonResponse(
+      { ok: false, error: reason, last: stored, summary: formatLovedSyncSummary(stored) },
+      400
+    );
+  }
+
+  const summaryBits = `loved ${result.loved} · 命中 ${result.matched} · 未命中 ${result.unmatched}`;
+  const truncNote = result.truncated ? " · truncated@1000" : "";
+  const idNote = result.playlistIdChanged ? " · playlist id changed" : "";
+  const stored = await saveLovedPlaylistSync({
+    ts: result.ts,
+    ok: true,
+    loved: result.loved,
+    matched: result.matched,
+    unmatched: result.unmatched,
+    truncated: result.truncated,
+    playlistId: result.playlistId,
+    playlistIdChanged: result.playlistIdChanged,
+    unmatchedSamples: result.unmatchedSamples,
+    reason: summaryBits + truncNote + idNote,
+  });
+  await appendScrobbleRecord({
+    title: "Last.fm Loved",
+    artist: "playlist",
+    ok: true,
+    reason: summaryBits + truncNote,
+    path: "loved_playlist_sync",
+    source: "manual",
+  });
+  if (result.unmatchedSamples?.length) {
+    const sample = result.unmatchedSamples
+      .slice(0, 5)
+      .map((s) => `${s.artist} - ${s.title}`)
+      .join("; ");
+    await appendLog("info", `loved playlist unmatched sample: ${sample}`);
+  }
+  await appendLog(
+    "info",
+    `loved playlist sync ok: ${summaryBits}${truncNote} id=${result.playlistId}`
+  );
+  return jsonResponse({
+    ok: true,
+    last: stored,
+    summary: formatLovedSyncSummary(stored),
+    playlistId: result.playlistId,
+    created: result.created,
+    playlistIdChanged: result.playlistIdChanged,
+    truncated: result.truncated,
+    unmatchedSamples: result.unmatchedSamples,
+  });
+});
 export async function handleHTTP(req: HTTPRequest): Promise<HTTPResponse> {
   return await router.handle(req);
 }
+

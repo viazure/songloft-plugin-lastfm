@@ -147,7 +147,7 @@ export interface ScrobbleRecord {
   /** Human-readable failure reason (never secrets). Optional path hint on success. */
   reason?: string;
   source?: string;
-  /** early-threshold | finish | skip | switch | replay | nowplaying | test | love | unlove */
+  /** early-threshold | finish | skip | switch | replay | nowplaying | test | love | unlove | loved_playlist_sync */
   path?: string;
 }
 
@@ -302,3 +302,79 @@ export async function appendScrobbleRecord(input: {
   await songloft.storage.set(SCROBBLES_KEY, next);
   return next;
 }
+
+/** Last successful/failed Loved→playlist sync summary (settings page). */
+export interface LovedPlaylistSyncStored {
+  ts: number;
+  ok: boolean;
+  loved: number;
+  matched: number;
+  unmatched: number;
+  truncated?: boolean;
+  playlistId?: number;
+  playlistIdChanged?: boolean;
+  reason?: string;
+  unmatchedSamples?: Array<{ artist: string; title: string }>;
+}
+
+const LOVED_SYNC_KEY = "loved_playlist_sync";
+
+export async function loadLovedPlaylistSync(): Promise<LovedPlaylistSyncStored | null> {
+  try {
+    const raw = await songloft.storage.get(LOVED_SYNC_KEY);
+    const data = asObject(raw);
+    if (!data || typeof data.ts !== "number") return null;
+    const out: LovedPlaylistSyncStored = {
+      ts: data.ts as number,
+      ok: data.ok === true,
+      loved: numOr(data.loved, 0),
+      matched: numOr(data.matched, 0),
+      unmatched: numOr(data.unmatched, 0),
+    };
+    if (data.truncated === true) out.truncated = true;
+    if (typeof data.playlistId === "number") out.playlistId = data.playlistId;
+    if (data.playlistIdChanged === true) out.playlistIdChanged = true;
+    if (typeof data.reason === "string" && data.reason) {
+      out.reason = sanitizeReason(data.reason);
+    }
+    if (Array.isArray(data.unmatchedSamples)) {
+      out.unmatchedSamples = (data.unmatchedSamples as unknown[])
+        .map((x) => {
+          if (!x || typeof x !== "object") return null;
+          const o = x as Record<string, unknown>;
+          const artist = typeof o.artist === "string" ? o.artist : "";
+          const title = typeof o.title === "string" ? o.title : "";
+          if (!artist && !title) return null;
+          return { artist, title };
+        })
+        .filter((x): x is { artist: string; title: string } => !!x)
+        .slice(0, 10);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLovedPlaylistSync(
+  result: LovedPlaylistSyncStored
+): Promise<LovedPlaylistSyncStored> {
+  const toStore: LovedPlaylistSyncStored = {
+    ts: result.ts,
+    ok: !!result.ok,
+    loved: result.loved | 0,
+    matched: result.matched | 0,
+    unmatched: result.unmatched | 0,
+  };
+  if (result.truncated) toStore.truncated = true;
+  if (typeof result.playlistId === "number") toStore.playlistId = result.playlistId;
+  if (result.playlistIdChanged) toStore.playlistIdChanged = true;
+  if (!result.ok && result.reason) toStore.reason = sanitizeReason(result.reason);
+  else if (result.reason) toStore.reason = sanitizeReason(result.reason);
+  if (result.unmatchedSamples?.length) {
+    toStore.unmatchedSamples = result.unmatchedSamples.slice(0, 10);
+  }
+  await songloft.storage.set(LOVED_SYNC_KEY, toStore);
+  return toStore;
+}
+
