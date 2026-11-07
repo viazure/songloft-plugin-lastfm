@@ -6,6 +6,8 @@ import {
   requiredListenSec,
   thresholdDelayMs,
   isDurationEligible,
+  playedSecSinceStart,
+  shouldFlushAbandoned,
 } from "../src/rules";
 
 describe("Pano-like defaults", () => {
@@ -83,12 +85,71 @@ describe("clampRules", () => {
   });
 });
 
+describe("playedSecSinceStart / shouldFlushAbandoned", () => {
+  const rules = DEFAULT_RULES;
+
+  it("clamps negative wall clock to 0", () => {
+    expect(playedSecSinceStart(100, 90)).toBe(0);
+  });
+
+  it("flushes when switch after threshold and early timer cancelled", () => {
+    // 200s track needs 100s; switch at t+120 with timer cleared → still flush
+    const r = shouldFlushAbandoned({
+      sawPlay: true,
+      scrobbled: false,
+      durationSec: 200,
+      startedAtSec: 1_000,
+      nowSec: 1_120,
+      rules,
+    });
+    expect(r.playedSec).toBe(120);
+    expect(r.flush).toBe(true);
+  });
+
+  it("does not flush before threshold", () => {
+    const r = shouldFlushAbandoned({
+      sawPlay: true,
+      scrobbled: false,
+      durationSec: 200,
+      startedAtSec: 1_000,
+      nowSec: 1_050,
+      rules,
+    });
+    expect(r.flush).toBe(false);
+    expect(r.playedSec).toBe(50);
+  });
+
+  it("does not flush if already scrobbled (early path won)", () => {
+    const r = shouldFlushAbandoned({
+      sawPlay: true,
+      scrobbled: true,
+      durationSec: 200,
+      startedAtSec: 1_000,
+      nowSec: 1_200,
+      rules,
+    });
+    expect(r.flush).toBe(false);
+  });
+
+  it("does not flush finish-only ghost without sawPlay", () => {
+    const r = shouldFlushAbandoned({
+      sawPlay: false,
+      scrobbled: false,
+      durationSec: 200,
+      startedAtSec: 1_000,
+      nowSec: 1_200,
+      rules,
+    });
+    expect(r.flush).toBe(false);
+  });
+});
+
 /**
  * Lightweight session dedupe model mirroring engine invariants
- * (no Songloft runtime): skip/finish/early share one scrobbled flag.
+ * (no Songloft runtime): skip/finish/early/switch share one scrobbled flag.
  */
 describe("session dedupe model", () => {
-  type Sess = { scrobbled: boolean; earlyArmed: boolean };
+  type Sess = { scrobbled: boolean; earlyArmed: boolean; sawPlay: boolean; startedAtSec: number; durationSec: number };
 
   function onEarly(s: Sess, ok: boolean): string[] {
     const log: string[] = [];
@@ -107,23 +168,77 @@ describe("session dedupe model", () => {
     log.push(kind);
     return log;
   }
+  function onSwitchReplace(s: Sess, nowSec: number, rules = DEFAULT_RULES): string[] {
+    const log: string[] = [];
+    s.earlyArmed = false; // clearEarly
+    const { flush } = shouldFlushAbandoned({
+      sawPlay: s.sawPlay,
+      scrobbled: s.scrobbled,
+      durationSec: s.durationSec,
+      startedAtSec: s.startedAtSec,
+      nowSec,
+      rules,
+    });
+    if (!flush) return log;
+    s.scrobbled = true;
+    log.push("switch");
+    return log;
+  }
 
   it("early then finish does not double", () => {
-    const s: Sess = { scrobbled: false, earlyArmed: true };
+    const s: Sess = { scrobbled: false, earlyArmed: true, sawPlay: true, startedAtSec: 0, durationSec: 200 };
     expect(onEarly(s, true)).toEqual(["early"]);
     expect(onFinishOrSkip(s, true, "finish")).toEqual([]);
   });
 
   it("finish then repeat finish does not double", () => {
-    const s: Sess = { scrobbled: false, earlyArmed: false };
+    const s: Sess = { scrobbled: false, earlyArmed: false, sawPlay: true, startedAtSec: 0, durationSec: 200 };
     expect(onFinishOrSkip(s, true, "finish")).toEqual(["finish"]);
     expect(onFinishOrSkip(s, true, "finish")).toEqual([]);
   });
 
   it("skip before threshold then no scrobble; later early cancelled", () => {
-    const s: Sess = { scrobbled: false, earlyArmed: true };
+    const s: Sess = { scrobbled: false, earlyArmed: true, sawPlay: true, startedAtSec: 0, durationSec: 200 };
     expect(onFinishOrSkip(s, false, "skip")).toEqual([]);
     expect(s.earlyArmed).toBe(false);
     expect(onEarly(s, true)).toEqual([]);
+  });
+
+  it("switch after threshold with early cancelled still scrobbles once", () => {
+    const s: Sess = {
+      scrobbled: false,
+      earlyArmed: true,
+      sawPlay: true,
+      startedAtSec: 1_000,
+      durationSec: 200,
+    };
+    // Race: clearEarly at switch time instead of firing early
+    expect(onSwitchReplace(s, 1_120)).toEqual(["switch"]);
+    expect(onSwitchReplace(s, 1_200)).toEqual([]);
+    expect(onFinishOrSkip(s, true, "finish")).toEqual([]);
+  });
+
+  it("switch before threshold does not scrobble", () => {
+    const s: Sess = {
+      scrobbled: false,
+      earlyArmed: true,
+      sawPlay: true,
+      startedAtSec: 1_000,
+      durationSec: 200,
+    };
+    expect(onSwitchReplace(s, 1_040)).toEqual([]);
+    expect(s.scrobbled).toBe(false);
+  });
+
+  it("early then switch does not double", () => {
+    const s: Sess = {
+      scrobbled: false,
+      earlyArmed: true,
+      sawPlay: true,
+      startedAtSec: 1_000,
+      durationSec: 200,
+    };
+    expect(onEarly(s, true)).toEqual(["early"]);
+    expect(onSwitchReplace(s, 1_200)).toEqual([]);
   });
 });

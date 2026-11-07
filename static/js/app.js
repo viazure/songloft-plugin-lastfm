@@ -24,6 +24,9 @@ const PATH_LABEL = {
   "early-threshold": "提前阈值",
   finish: "播完",
   skip: "跳过时达标",
+  switch: "切歌时达标",
+  replay: "重播前达标",
+  nowplaying: "正在播放",
   test: "手动探测",
 };
 
@@ -394,3 +397,4 @@ $("btnSc").onclick = async () => {
 document.addEventListener("DOMContentLoaded", () => {
   refresh().catch((e) => setFlash(String(e), "err"));
 });
+

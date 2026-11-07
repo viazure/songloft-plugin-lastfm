@@ -50,9 +50,10 @@ export function isDurationEligible(durationSec: number, rules: ScrobbleRuleConfi
 }
 
 /**
- * Shared gate for finish / skip / early-threshold.
+ * Shared gate for finish / skip / early-threshold / switch-abandon.
  * `playedSec` must be observed listen time (or host-declared finish ~= full duration).
- * Do NOT pass wall-clock-since-play as verified playback when progress is unknown.
+ * Do NOT pass wall-clock-since-play as verified playback when progress is unknown —
+ * except on explicit abandon/switch flush after a real `play` (best-effort continuous).
  */
 export function qualifiesForScrobble(
   durationSec: number,
@@ -68,4 +69,30 @@ export function qualifiesForScrobble(
 /** Delay (ms) until threshold if continuous play from t=0. Only with real play start + continuous play. */
 export function thresholdDelayMs(durationSec: number, rules: ScrobbleRuleConfig): number {
   return Math.max(0, Math.ceil(requiredListenSec(durationSec, rules) * 1000));
+}
+
+/** Wall-clock seconds since a real play start (switch / replay abandon flush). */
+export function playedSecSinceStart(startedAtSec: number, nowSec: number): number {
+  if (!Number.isFinite(startedAtSec) || !Number.isFinite(nowSec)) return 0;
+  return Math.max(0, nowSec - startedAtSec);
+}
+
+/**
+ * Whether an in-memory session should scrobble when replaced by a new play
+ * (host often sends play(B) without skip/finish(A); early timer may also be cancelled at the threshold race).
+ */
+export function shouldFlushAbandoned(opts: {
+  sawPlay: boolean;
+  scrobbled: boolean;
+  durationSec: number;
+  startedAtSec: number;
+  nowSec: number;
+  rules: ScrobbleRuleConfig;
+}): { flush: boolean; playedSec: number } {
+  const playedSec = playedSecSinceStart(opts.startedAtSec, opts.nowSec);
+  if (!opts.sawPlay || opts.scrobbled) return { flush: false, playedSec };
+  return {
+    flush: qualifiesForScrobble(opts.durationSec, playedSec, opts.rules),
+    playedSec,
+  };
 }

@@ -10,7 +10,12 @@ import {
   markSessionInvalid,
   rulesFromSettings,
 } from "./store";
-import { qualifiesForScrobble, thresholdDelayMs, type ScrobbleRuleConfig } from "./rules";
+import {
+  qualifiesForScrobble,
+  shouldFlushAbandoned,
+  thresholdDelayMs,
+  type ScrobbleRuleConfig,
+} from "./rules";
 
 /** In-flight track state for threshold / dedupe. */
 interface ActivePlay {
@@ -156,6 +161,38 @@ function scheduleEarly(play: ActivePlay, rules: ScrobbleRuleConfig): void {
   }, delay);
 }
 
+/**
+ * Host often emits play(B) without skip/finish(A). Previously we only clearEarly+delete,
+ * which races the early timer at the threshold and drops wall-clock-qualified listens.
+ * Flush with the same continuous-play assumption as early-threshold.
+ */
+async function flushAbandonedPlay(
+  play: ActivePlay,
+  nowSec: number,
+  rules: ScrobbleRuleConfig,
+  reason: "switch" | "replay"
+): Promise<void> {
+  clearEarly(play);
+  const { flush, playedSec } = shouldFlushAbandoned({
+    sawPlay: play.sawPlay,
+    scrobbled: play.scrobbled,
+    durationSec: play.durationSec,
+    startedAtSec: play.startedAtSec,
+    nowSec,
+    rules,
+  });
+  if (!flush) {
+    if (play.sawPlay && !play.scrobbled) {
+      await appendLog(
+        "info",
+        `abandon without scrobble (${reason}, played=${playedSec}s): ${play.artist} - ${play.title}`
+      );
+    }
+    return;
+  }
+  await doScrobble(play, reason, rules);
+}
+
 export async function handlePlayEvent(event: PlayEvent): Promise<void> {
   const settings = await loadSettings();
   if (!settings.enabled) return;
@@ -183,16 +220,20 @@ export async function handlePlayEvent(event: PlayEvent): Promise<void> {
   }
 
   if (event.type === "play") {
-    // New play: drop other early timers for different songs to avoid ghosts.
-    for (const [id, other] of active) {
+    // New play: flush other sessions that already crossed threshold, then drop them.
+    for (const [id, other] of [...active.entries()]) {
       if (id !== songId) {
-        clearEarly(other);
+        await flushAbandonedPlay(other, startedAtSec, rules, "switch");
         active.delete(id);
       }
     }
     const meta = await songMeta(songId);
     const prev = active.get(songId);
-    if (prev) clearEarly(prev);
+    if (prev) {
+      // Same songId re-play (restart / re-queue): flush prior listen if qualified.
+      await flushAbandonedPlay(prev, startedAtSec, rules, "replay");
+      active.delete(songId);
+    }
     const play: ActivePlay = {
       songId,
       title,
@@ -212,6 +253,15 @@ export async function handlePlayEvent(event: PlayEvent): Promise<void> {
       songloft.log.info(`[lastfm] nowplaying ${artist} - ${title}`);
     } catch (e) {
       const msg = await handleInvalidSession(e);
+      // Surface nowplaying failures in 最近记录 (scrobble path already recorded).
+      await appendScrobbleRecord({
+        title,
+        artist,
+        ok: false,
+        reason: msg,
+        source,
+        path: "nowplaying",
+      });
       await appendLog("error", `nowplaying failed: ${msg}`);
       songloft.log.error(`[lastfm] nowplaying failed: ${msg}`);
     }

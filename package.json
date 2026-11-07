@@ -1,6 +1,6 @@
 {
   "name": "lastfm",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "听歌时自动把播放记录同步到 Last.fm",
   "private": true,
   "scripts": {
@@ -17,4 +17,3 @@
     "vitest": "^3.2.4"
   }
 }
-
