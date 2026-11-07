@@ -541,6 +541,26 @@ $("btnSaveLovedName").onclick = async () => {
   }
 };
 
+async function saveLovedSchedule() {
+  const enabled = $("lovedScheduleEnabled") ? $("lovedScheduleEnabled").checked : false;
+  const hoursRaw = $("lovedScheduleIntervalHours") ? $("lovedScheduleIntervalHours").value : "24";
+  const hours = Number(hoursRaw);
+  await apiPost("/api/settings", {
+    lovedScheduleEnabled: !!enabled,
+    lovedScheduleIntervalHours: hours === 6 || hours === 12 || hours === 24 ? hours : 24,
+  });
+}
+
+$("btnSaveLovedSchedule").onclick = async () => {
+  try {
+    await saveLovedSchedule();
+    await refresh({ flash: "Loved 定时已保存", flashCls: "ok" });
+  } catch (e) {
+    setFlash("保存定时失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+};
+
 $("btnSyncLoved").onclick = async () => {
   const btn = $("btnSyncLoved");
   btn.disabled = true;
