@@ -242,3 +242,47 @@ describe("session dedupe model", () => {
     expect(onSwitchReplace(s, 1_200)).toEqual([]);
   });
 });
+
+
+/**
+ * Async inflight mirror of engine.doScrobble: early-timer and switch-flush
+ * can both enter before scrobbled flips; shared promise keeps one send.
+ */
+describe("async inflight scrobble dedupe", () => {
+  type Play = {
+    scrobbled: boolean;
+    inflight: Promise<void> | null;
+    sends: number;
+  };
+
+  async function doScrobble(play: Play, label: string, log: string[]): Promise<void> {
+    if (play.scrobbled) return;
+    if (play.inflight) {
+      await play.inflight;
+      return;
+    }
+    const run = (async () => {
+      if (play.scrobbled) return;
+      // Simulate network latency before marking done.
+      await new Promise((r) => setTimeout(r, 20));
+      play.scrobbled = true;
+      play.sends += 1;
+      log.push(label);
+    })();
+    play.inflight = run;
+    try {
+      await run;
+    } finally {
+      if (play.inflight === run) play.inflight = null;
+    }
+  }
+
+  it("concurrent early and switch send once", async () => {
+    const play: Play = { scrobbled: false, inflight: null, sends: 0 };
+    const log: string[] = [];
+    await Promise.all([doScrobble(play, "early", log), doScrobble(play, "switch", log)]);
+    expect(play.sends).toBe(1);
+    expect(log).toHaveLength(1);
+    expect(play.scrobbled).toBe(true);
+  });
+});

@@ -30,6 +30,8 @@ interface ActivePlay {
   /** True only when a real `play` event opened this session. */
   sawPlay: boolean;
   earlyTimer: ReturnType<typeof setTimeout> | null;
+  /** Shared promise so early-timer and switch-flush cannot double-scrobble. */
+  scrobbleInflight: Promise<void> | null;
 }
 
 let scrobbler: LastFmScrobbler | null = null;
@@ -103,47 +105,61 @@ async function doScrobble(
   rules: ScrobbleRuleConfig
 ): Promise<void> {
   if (play.scrobbled) return;
-  if (!(await refreshScrobbler()) || !(await scrobbler!.isReady())) {
-    songloft.log.info(`[lastfm] skip scrobble (${reason}): not connected`);
-    await appendScrobbleRecord({
-      title: play.title,
-      artist: play.artist,
-      ok: false,
-      reason: "尚未连接账号",
-      source: play.source,
-      path: reason,
-    });
-    await appendLog("warn", `scrobble skipped (not connected): ${play.artist} - ${play.title}`);
+  // Serialize early-threshold vs switch/replay flush around the same listen.
+  if (play.scrobbleInflight) {
+    await play.scrobbleInflight;
     return;
   }
+  const run = (async () => {
+    if (play.scrobbled) return;
+    if (!(await refreshScrobbler()) || !(await scrobbler!.isReady())) {
+      songloft.log.info(`[lastfm] skip scrobble (${reason}): not connected`);
+      await appendScrobbleRecord({
+        title: play.title,
+        artist: play.artist,
+        ok: false,
+        reason: "尚未连接账号",
+        source: play.source,
+        path: reason,
+      });
+      await appendLog("warn", `scrobble skipped (not connected): ${play.artist} - ${play.title}`);
+      return;
+    }
+    try {
+      await scrobbler!.scrobble(toListen(play));
+      play.scrobbled = true;
+      clearEarly(play);
+      await appendScrobbleRecord({
+        title: play.title,
+        artist: play.artist,
+        ok: true,
+        source: play.source,
+        path: reason,
+      });
+      await appendLog(
+        "info",
+        `scrobble: ${play.artist} - ${play.title} (${play.source}, ${reason})`
+      );
+      songloft.log.info(`[lastfm] scrobble ${play.artist} - ${play.title} (${reason})`);
+    } catch (e) {
+      const msg = await handleInvalidSession(e);
+      await appendScrobbleRecord({
+        title: play.title,
+        artist: play.artist,
+        ok: false,
+        reason: msg,
+        source: play.source,
+        path: reason,
+      });
+      await appendLog("error", `scrobble failed: ${msg}`);
+      songloft.log.error(`[lastfm] scrobble failed: ${msg}`);
+    }
+  })();
+  play.scrobbleInflight = run;
   try {
-    await scrobbler!.scrobble(toListen(play));
-    play.scrobbled = true;
-    clearEarly(play);
-    await appendScrobbleRecord({
-      title: play.title,
-      artist: play.artist,
-      ok: true,
-      source: play.source,
-      path: reason,
-    });
-    await appendLog(
-      "info",
-      `scrobble: ${play.artist} - ${play.title} (${play.source}, ${reason})`
-    );
-    songloft.log.info(`[lastfm] scrobble ${play.artist} - ${play.title} (${reason})`);
-  } catch (e) {
-    const msg = await handleInvalidSession(e);
-    await appendScrobbleRecord({
-      title: play.title,
-      artist: play.artist,
-      ok: false,
-      reason: msg,
-      source: play.source,
-      path: reason,
-    });
-    await appendLog("error", `scrobble failed: ${msg}`);
-    songloft.log.error(`[lastfm] scrobble failed: ${msg}`);
+    await run;
+  } finally {
+    if (play.scrobbleInflight === run) play.scrobbleInflight = null;
   }
 }
 
@@ -245,6 +261,7 @@ export async function handlePlayEvent(event: PlayEvent): Promise<void> {
       scrobbled: false,
       sawPlay: true,
       earlyTimer: null,
+    scrobbleInflight: null,
     };
     active.set(songId, play);
     try {
@@ -284,6 +301,7 @@ export async function handlePlayEvent(event: PlayEvent): Promise<void> {
         scrobbled: false,
         sawPlay: false,
         earlyTimer: null,
+      scrobbleInflight: null,
       };
       active.set(songId, play);
     }
