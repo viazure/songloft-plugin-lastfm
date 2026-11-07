@@ -236,15 +236,19 @@ async function refresh(opts) {
   $("minDurationSec").value = settings.minDurationSec ?? 30;
   $("delayPercent").value = settings.delayPercent ?? 50;
   $("delayMaxSec").value = settings.delayMaxSec ?? 240;
+  if ($("lovedPlaylistName")) {
+    $("lovedPlaylistName").value = settings.lovedPlaylistName || "Last.fm Loved";
+  }
 
   applyConnectionUI(st, settings);
   updateLoveCurrent(st.lastPlay);
 
   const loveDisabled = connectionState((st && st.status) || {}) !== "connected";
-  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved"].forEach((id) => {
+  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved", "btnSaveLovedName"].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = loveDisabled;
   });
+  if ($("lovedPlaylistName")) $("lovedPlaylistName").disabled = loveDisabled;
 
   if (options.flash) setFlash(options.flash, options.flashCls || "muted");
   else if (!options.keepFlash) setFlash("");
@@ -484,10 +488,27 @@ $("btnLoveProbe").onclick = () => loveProbe("love");
 $("btnUnloveProbe").onclick = () => loveProbe("unlove");
 
 
+async function saveLovedPlaylistName() {
+  const raw = $("lovedPlaylistName") ? $("lovedPlaylistName").value : "";
+  await apiPost("/api/settings", { lovedPlaylistName: raw });
+}
+
+$("btnSaveLovedName").onclick = async () => {
+  try {
+    await saveLovedPlaylistName();
+    await refresh({ flash: "Loved 歌单名已保存", flashCls: "ok" });
+  } catch (e) {
+    setFlash("保存歌单名失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+};
+
 $("btnSyncLoved").onclick = async () => {
   const btn = $("btnSyncLoved");
   btn.disabled = true;
   try {
+    // Persist name first so sync uses the value currently in the input.
+    await saveLovedPlaylistName();
     setFlash("正在同步 Loved 到歌单…", "muted");
     const res = await apiPost("/api/loved-playlist/sync", {});
     if (!res.ok) throw new Error(res.error || "同步失败");

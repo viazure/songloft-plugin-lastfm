@@ -15,6 +15,8 @@ export interface PluginSettings {
   delayPercent: number;
   /** Pano-like: absolute delay cap (sec). Default 240. */
   delayMaxSec: number;
+  /** Songloft playlist name for Loved sync. Empty → "Last.fm Loved". */
+  lovedPlaylistName: string;
 }
 
 const SETTINGS_KEY = "settings";
@@ -36,6 +38,7 @@ const DEFAULTS: PluginSettings = {
   minDurationSec: 30,
   delayPercent: 50,
   delayMaxSec: 240,
+  lovedPlaylistName: "Last.fm Loved",
 };
 
 function asObject(raw: unknown): Record<string, unknown> {
@@ -73,6 +76,8 @@ export async function loadSettings(): Promise<PluginSettings> {
       minDurationSec: numOr(data.minDurationSec, DEFAULTS.minDurationSec),
       delayPercent: numOr(data.delayPercent, DEFAULTS.delayPercent),
       delayMaxSec: numOr(data.delayMaxSec, DEFAULTS.delayMaxSec),
+      lovedPlaylistName:
+        typeof data.lovedPlaylistName === "string" ? data.lovedPlaylistName : DEFAULTS.lovedPlaylistName,
     };
   } catch {
     return { ...DEFAULTS };
@@ -315,6 +320,8 @@ export interface LovedPlaylistSyncStored {
   playlistIdChanged?: boolean;
   reason?: string;
   unmatchedSamples?: Array<{ artist: string; title: string }>;
+  /** Resolved playlist name used for this sync. */
+  playlistName?: string;
 }
 
 const LOVED_SYNC_KEY = "loved_playlist_sync";
@@ -334,6 +341,9 @@ export async function loadLovedPlaylistSync(): Promise<LovedPlaylistSyncStored |
     if (data.truncated === true) out.truncated = true;
     if (typeof data.playlistId === "number") out.playlistId = data.playlistId;
     if (data.playlistIdChanged === true) out.playlistIdChanged = true;
+    if (typeof data.playlistName === "string" && data.playlistName.trim()) {
+      out.playlistName = data.playlistName.trim();
+    }
     if (typeof data.reason === "string" && data.reason) {
       out.reason = sanitizeReason(data.reason);
     }
@@ -369,6 +379,9 @@ export async function saveLovedPlaylistSync(
   if (result.truncated) toStore.truncated = true;
   if (typeof result.playlistId === "number") toStore.playlistId = result.playlistId;
   if (result.playlistIdChanged) toStore.playlistIdChanged = true;
+  if (typeof result.playlistName === "string" && result.playlistName.trim()) {
+    toStore.playlistName = result.playlistName.trim();
+  }
   if (!result.ok && result.reason) toStore.reason = sanitizeReason(result.reason);
   else if (result.reason) toStore.reason = sanitizeReason(result.reason);
   if (result.unmatchedSamples?.length) {

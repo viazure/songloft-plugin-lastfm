@@ -4,6 +4,12 @@ import { LastFmScrobbler } from "./scrobbler";
 import { matchLovedTracks, type LibrarySongRef } from "./match";
 
 export const LOVED_PLAYLIST_NAME = "Last.fm Loved";
+
+/** Trim; empty / whitespace-only → default. Never returns empty string. */
+export function resolveLovedPlaylistName(raw?: string | null): string {
+  const name = typeof raw === "string" ? raw.trim() : "";
+  return name || LOVED_PLAYLIST_NAME;
+}
 export const LOVED_HARD_CAP = 1000;
 export const ADD_CHUNK = 200;
 
@@ -18,6 +24,9 @@ export interface LovedPlaylistSyncOk {
   playlistIdChanged: boolean;
   created: boolean;
   unmatchedSamples: Array<{ artist: string; title: string }>;
+  playlistName: string;
+  /** True when resolved name differs from previousPlaylistName. */
+  targetChanged: boolean;
 }
 
 export interface LovedPlaylistSyncFail {
@@ -158,6 +167,10 @@ export interface SyncDeps {
   playlistsApi: PlaylistsApi;
   hardCap?: number;
   now?: () => number;
+  /** Display name; resolveLovedPlaylistName applied inside sync. */
+  playlistName?: string;
+  /** Prior synced playlist name (for targetChanged note). */
+  previousPlaylistName?: string | null;
 }
 
 /**
@@ -185,7 +198,10 @@ export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylist
     partial.matched = match.matched;
     partial.unmatched = match.unmatched;
     partial.unmatchedSamples = match.unmatchedSamples;
-    const upsert = await upsertLovedPlaylist(deps.playlistsApi, match.matchedIds);
+    const playlistName = resolveLovedPlaylistName(deps.playlistName);
+    const prev = typeof deps.previousPlaylistName === "string" ? deps.previousPlaylistName.trim() : "";
+    const targetChanged = !!prev && prev !== playlistName;
+    const upsert = await upsertLovedPlaylist(deps.playlistsApi, match.matchedIds, playlistName);
     return {
       ok: true,
       ts,
@@ -197,6 +213,8 @@ export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylist
       playlistIdChanged: upsert.playlistIdChanged,
       created: upsert.created,
       unmatchedSamples: match.unmatchedSamples,
+      playlistName,
+      targetChanged,
     };
   } catch (e) {
     // Preserve any counts already obtained before the failure (do not flash false zeros).

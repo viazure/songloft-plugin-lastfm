@@ -6,7 +6,7 @@ import {
   normalizeMbid,
   normalizeText,
 } from "../src/match";
-import { formatLovedSyncSummary, LOVED_PLAYLIST_NAME } from "../src/loved-playlist";
+import { formatLovedSyncSummary, LOVED_PLAYLIST_NAME, resolveLovedPlaylistName } from "../src/loved-playlist";
 
 describe("normalize / keys", () => {
   it("trims, lowercases, collapses whitespace", () => {
@@ -143,5 +143,10 @@ describe("formatLovedSyncSummary", () => {
 
   it("playlist name constant", () => {
     expect(LOVED_PLAYLIST_NAME).toBe("Last.fm Loved");
+  });
+
+  it("resolveLovedPlaylistName blank fallback", () => {
+    expect(resolveLovedPlaylistName("")).toBe("Last.fm Loved");
+    expect(resolveLovedPlaylistName(" x ")).toBe("x");
   });
 });

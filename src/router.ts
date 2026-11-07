@@ -17,7 +17,8 @@ import {
   saveLovedPlaylistSync,
   saveSettings,
 } from "./store";
-import { formatLovedSyncSummary, syncLovedToPlaylist } from "./loved-playlist";
+import {
+  resolveLovedPlaylistName, formatLovedSyncSummary, syncLovedToPlaylist } from "./loved-playlist";
 
 const router = createRouter();
 
@@ -72,6 +73,7 @@ router.get("/api/settings", async () => {
     minDurationSec: settings.minDurationSec,
     delayPercent: settings.delayPercent,
     delayMaxSec: settings.delayMaxSec,
+    lovedPlaylistName: resolveLovedPlaylistName(settings.lovedPlaylistName),
     status: publicStatus(settings),
   });
 });
@@ -104,6 +106,10 @@ router.post("/api/settings", async (req) => {
   if (typeof body.delayMaxSec === "number" || typeof body.delayMaxSec === "string") {
     const n = Number(body.delayMaxSec);
     if (Number.isFinite(n)) patch.delayMaxSec = n;
+  }
+  if (typeof body.lovedPlaylistName === "string") {
+    // Persist raw (may be blank); resolve at sync/read time so empty → default.
+    patch.lovedPlaylistName = body.lovedPlaylistName;
   }
   const nextKey = typeof patch.apiKey === "string" ? (patch.apiKey as string) : cur.apiKey;
   const nextSecret =
@@ -420,7 +426,7 @@ router.get("/api/loved-playlist", async () => {
 });
 
 /**
- * Sync Last.fm loved tracks into Songloft playlist "Last.fm Loved".
+ * Sync Last.fm loved tracks into Songloft playlist (configurable name; default Last.fm Loved).
  * Explicit user action — not gated by onlyMiot; isolated from scrobble/flush/keep-alive.
  */
 router.post("/api/loved-playlist/sync", async () => {
@@ -441,7 +447,7 @@ router.post("/api/loved-playlist/sync", async () => {
     };
     await saveLovedPlaylistSync(fail);
     await appendScrobbleRecord({
-      title: "Last.fm Loved",
+      title: resolveLovedPlaylistName(settings.lovedPlaylistName),
       artist: "playlist",
       ok: false,
       reason,
@@ -452,11 +458,15 @@ router.post("/api/loved-playlist/sync", async () => {
   }
 
   // songloft.songs / songloft.playlists are host bridge APIs (need playlists.* perms).
+  const previous = await loadLovedPlaylistSync();
+  const playlistName = resolveLovedPlaylistName(settings.lovedPlaylistName);
   const result = await syncLovedToPlaylist({
     scrobbler: client,
     username: settings.username,
     songsApi: songloft.songs,
     playlistsApi: songloft.playlists,
+    playlistName,
+    previousPlaylistName: previous?.playlistName || null,
   });
 
   if (!result.ok) {
@@ -467,7 +477,7 @@ router.post("/api/loved-playlist/sync", async () => {
     const reason = friendlyLastFmError(result.reason);
     const stored = await saveLovedPlaylistSync({ ...result, reason });
     await appendScrobbleRecord({
-      title: "Last.fm Loved",
+      title: resolveLovedPlaylistName(settings.lovedPlaylistName),
       artist: "playlist",
       ok: false,
       reason,
@@ -484,6 +494,7 @@ router.post("/api/loved-playlist/sync", async () => {
   const summaryBits = `loved ${result.loved} · 命中 ${result.matched} · 未命中 ${result.unmatched}`;
   const truncNote = result.truncated ? " · truncated@1000" : "";
   const idNote = result.playlistIdChanged ? " · playlist id changed" : "";
+  const targetNote = result.targetChanged ? " · 目标歌单已变" : "";
   const stored = await saveLovedPlaylistSync({
     ts: result.ts,
     ok: true,
@@ -494,13 +505,14 @@ router.post("/api/loved-playlist/sync", async () => {
     playlistId: result.playlistId,
     playlistIdChanged: result.playlistIdChanged,
     unmatchedSamples: result.unmatchedSamples,
-    reason: summaryBits + truncNote + idNote,
+    playlistName: result.playlistName,
+    reason: summaryBits + truncNote + idNote + targetNote,
   });
   await appendScrobbleRecord({
-    title: "Last.fm Loved",
+    title: result.playlistName,
     artist: "playlist",
     ok: true,
-    reason: summaryBits + truncNote,
+    reason: summaryBits + truncNote + targetNote,
     path: "loved_playlist_sync",
     source: "manual",
   });

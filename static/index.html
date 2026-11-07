@@ -190,10 +190,13 @@
   <!-- 2a2. Loved → 歌单（弱替代，非宿主红心双向） -->
   <div class="card" id="section-loved-playlist">
     <h2>Loved 歌单</h2>
-    <p class="muted">把 Last.fm 上的喜欢曲目<strong>导入/覆盖刷新</strong>到本机歌单 <code>Last.fm Loved</code>（与曲库精确匹配艺人+曲名）。不是 Songloft 红心双向；未命中的曲不会自动下载。</p>
+    <p class="muted">把 Last.fm 上的喜欢曲目<strong>导入/覆盖刷新</strong>到本机歌单（默认 <code>Last.fm Loved</code>；可改名）。与曲库精确匹配艺人+曲名。不是 Songloft 红心双向；未命中的曲不会自动下载。改名后下次同步只覆盖<strong>当前名</strong>那一张，旧名歌单不会自动删除。</p>
+    <label for="lovedPlaylistName">Loved 歌单名</label>
+    <input id="lovedPlaylistName" type="text" placeholder="Last.fm Loved" />
     <div id="lovedSyncLast" class="muted" style="margin-top:8px">上次：尚未同步过</div>
     <div class="row" style="margin-top:10px">
       <button type="button" id="btnSyncLoved">同步 Loved 到歌单</button>
+      <button type="button" class="secondary" id="btnSaveLovedName">保存歌单名</button>
     </div>
   </div>
 <!-- 2b. 最近 scrobble 观测 -->
