@@ -23,9 +23,9 @@ function setFlash(text, cls) {
 const PATH_LABEL = {
   "early-threshold": "提前达标",
   finish: "播完",
-  skip: "跳过时记下",
-  switch: "切歌时记下",
-  replay: "重播前记下",
+  skip: "跳过时达标",
+  switch: "切歌时达标",
+  replay: "重播前达标",
   nowplaying: "正在播放",
   test: "手动测试",
   love: "红心",
@@ -44,7 +44,7 @@ function renderScrobbles(records) {
   if (!box) return;
   const list = Array.isArray(records) ? records.slice().reverse() : [];
   if (!list.length) {
-    box.innerHTML = '<div class="scrobble-empty">暂无记录。听几首歌或点「试一下记播放」后会出现在这里。</div>';
+    box.innerHTML = '<div class="scrobble-empty">暂无记录。听几首歌或点「测记录播放」后会出现在这里。</div>';
     return;
   }
   box.innerHTML = list.map((r) => {
@@ -261,7 +261,7 @@ function showWaiting(url) {
     ? ` <a href="${authUrl}" target="_blank" rel="noreferrer">再次打开授权页</a>`
     : "";
   $("connectWaitingText").innerHTML =
-    "已打开 Last.fm 授权页。在网页上点「允许」，再回到这里，连接就自动完成了。" + link;
+    "已打开 Last.fm 授权页，请在网页点允许，回到这里即自动完成。" + link;
   $("connectPanel").classList.remove("hidden");
   $("connectPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -732,9 +732,9 @@ $("btnSyncStats") && ($("btnSyncStats").onclick = async () => {
 
 $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
   const ok = window.confirm(
-    "尽量同步：单次最多约读取/处理 5000 条历史，先不管上次同步到哪里，适合第一次尽量往前补（不保证一次补齐全部）。\n" +
-      "只写入曲库里已有的歌；对不上的会跳过；同步过的不会重复写。\n" +
-      "需要先装好官方「播放统计」插件。会慢一些（在后台跑），要继续吗？"
+    "尽量同步：单次最多约读取/处理 5000 条历史，暂不按上次进度，适合首次补齐历史（不保证一次补齐全部）。\n" +
+      "只写入曲库已有的歌；未匹配跳过，已同步不重复写入。\n" +
+      "需已安装官方「播放统计」插件。耗时较长（后台运行），确定继续？"
   );
   if (!ok) return;
   const btn = $("btnSyncStatsFull");
@@ -742,10 +742,10 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
   if (btn) btn.disabled = true;
   if (incrBtn) incrBtn.disabled = true;
   try {
-    setFlash("正在尽量同步 Last.fm → 播放统计（单次约 5000 条）…", "muted");
+    setFlash("正在尽量同步…（单次约 5000 条）", "muted");
     const res = await apiPost("/api/stats-sync", { mode: "full" });
     if (res.accepted) {
-      setFlash("尽量同步已开始，正在后台跑…", "muted");
+      setFlash("尽量同步已开始，后台进行中…", "muted");
       const prevTs = res.last && res.last.ts;
       let finalSummary = res.summary || "";
       // ok | fail | skipped | timeout — never fake "完成" on skip/fail
@@ -787,7 +787,7 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
         });
       } else if (outcome === "skipped") {
         await refresh({
-          flash: "尽量同步没跑成（正忙或已跳过）：" + finalSummary,
+          flash: "尽量同步未执行（忙或已跳过）：" + finalSummary,
           flashCls: "err",
         });
       } else {
