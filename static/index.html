@@ -228,7 +228,7 @@
       <input id="statsSyncHardCap" type="number" min="1" max="5000" value="500" style="width:88px" />
       <button type="button" class="secondary" id="btnSaveStatsCap">保存上限</button>
     </div>
-    <p class="muted" style="margin-top:6px">「同步」按日常上限 + 水位增量；「尽量同步」单次拉高到 5000 并忽略水位一次（已导入的会跳过）。定时始终走日常增量，不会自动拉 5000。结果行保留：拉取 / 命中 / 导入 / 近窗跳过 / 未匹配。</p>
+    <p class="muted" style="margin-top:6px">「同步」按日常上限 + 水位增量；「尽量同步」单次拉高到 5000 并忽略水位一次（已导入的会跳过）。定时始终走日常增量，不会自动走「尽量同步」。结果行保留：拉取 / 命中 / 导入 / 近窗跳过 / 未匹配。</p>
     <div class="row" style="margin-top:12px; align-items:center; gap:12px; flex-wrap:wrap">
       <label style="display:flex; align-items:center; gap:6px; margin:0">
         <input id="statsScheduleEnabled" type="checkbox" />

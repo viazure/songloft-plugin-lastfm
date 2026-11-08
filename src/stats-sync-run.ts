@@ -9,6 +9,7 @@ import {
   type StatsSyncResult,
   NEAR_WINDOW_STRATEGY,
   STATS_SYNC_FULL_HARD_CAP,
+  resolvePersistWatermark,
 } from "./stats-sync";
 import { statsScheduler } from "./stats-schedule";
 import {
@@ -58,6 +59,8 @@ export interface StatsSyncRunSkipped {
 }
 
 export type StatsSyncRunResult = StatsSyncRunOk | StatsSyncRunFail | StatsSyncRunSkipped;
+
+
 
 function toStored(result: StatsSyncResult, hardCap: number): StatsSyncStored {
   const base: StatsSyncStored = {
@@ -154,7 +157,12 @@ async function executeStatsSync(
       await refreshScrobbler();
     }
     const reason = friendlyLastFmError(result.reason);
-    const stored = await saveStatsSyncState(toStored({ ...result, reason }, hardCap));
+    const failResult = {
+      ...result,
+      reason,
+      watermarkUts: resolvePersistWatermark(prev?.watermarkUts, result.watermarkUts),
+    };
+    const stored = await saveStatsSyncState(toStored(failResult, hardCap));
     await appendScrobbleRecord({
       title: "播放统计同步",
       artist: "lastfm→stats",
@@ -174,7 +182,11 @@ async function executeStatsSync(
     };
   }
 
-  const stored = await saveStatsSyncState(toStored(result, hardCap));
+  const okResult = {
+    ...result,
+    watermarkUts: resolvePersistWatermark(prev?.watermarkUts, result.watermarkUts),
+  };
+  const stored = await saveStatsSyncState(toStored(okResult, hardCap));
   const summary = formatStatsSyncSummary(stored as StatsSyncResult);
   await appendScrobbleRecord({
     title: "播放统计同步",
@@ -193,7 +205,7 @@ async function executeStatsSync(
   }
   await appendLog(
     "info",
-    `stats sync ok (${source}/${effectiveMode}): fetched=${result.fetched} matched=${result.matched} imported=${result.imported} near=${result.skippedNear} unmatched=${result.unmatched} wm=${result.watermarkUts} hardCap=${hardCap}`
+    `stats sync ok (${source}/${effectiveMode}): fetched=${result.fetched} matched=${result.matched} imported=${result.imported} near=${result.skippedNear} unmatched=${result.unmatched} wm=${okResult.watermarkUts} hardCap=${hardCap}`
   );
   return { ok: true, last: stored, summary, source };
 }

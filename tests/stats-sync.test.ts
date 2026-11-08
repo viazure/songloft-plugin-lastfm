@@ -9,6 +9,7 @@ import {
   STATS_SYNC_DEFAULT_HARD_CAP,
   STATS_SYNC_FULL_HARD_CAP,
   STATS_SYNC_MAX_HARD_CAP,
+  resolvePersistWatermark,
 } from "../src/stats-sync";
 import { buildLibraryIndexes, resolveSongId } from "../src/match";
 import { statsPluginUrl } from "../src/stats-client";
@@ -132,5 +133,20 @@ describe("statsPluginUrl", () => {
     const u2 = statsPluginUrl("http://h", "a b", "/api/history/raw?limit=1");
     expect(u2).toContain("access_token=a%20b");
     expect(u2).toContain("/api/v1/jsplugin/stats/api/history/raw?limit=1&");
+  });
+});
+
+
+describe("resolvePersistWatermark", () => {
+  it("keeps prev on full-mode fail/empty (result wm 0)", () => {
+    expect(resolvePersistWatermark(12345, 0)).toBe(12345);
+    expect(resolvePersistWatermark(12345, undefined)).toBe(12345);
+    expect(resolvePersistWatermark(12345, null)).toBe(12345);
+  });
+  it("advances when result is higher; never regresses", () => {
+    expect(resolvePersistWatermark(1000, 2000)).toBe(2000);
+    expect(resolvePersistWatermark(2000, 500)).toBe(2000);
+    expect(resolvePersistWatermark(0, 0)).toBe(0);
+    expect(resolvePersistWatermark(undefined, 99)).toBe(99);
   });
 });

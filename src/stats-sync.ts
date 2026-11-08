@@ -30,6 +30,22 @@ export function normalizeHardCap(v: unknown): number {
   return Math.min(STATS_SYNC_MAX_HARD_CAP, Math.max(1, Math.floor(n)));
 }
 
+/** Never let a full-mode (watermark-in=0) fail/empty run wipe a higher persisted watermark. */
+export function resolvePersistWatermark(
+  prevWatermarkUts: number | null | undefined,
+  resultWatermarkUts: number | null | undefined
+): number {
+  const prev =
+    typeof prevWatermarkUts === "number" && Number.isFinite(prevWatermarkUts)
+      ? Math.max(0, Math.floor(prevWatermarkUts))
+      : 0;
+  const next =
+    typeof resultWatermarkUts === "number" && Number.isFinite(resultWatermarkUts)
+      ? Math.max(0, Math.floor(resultWatermarkUts))
+      : 0;
+  return Math.max(prev, next);
+}
+
 export interface RecentTrackRef {
   artist: string;
   title: string;
