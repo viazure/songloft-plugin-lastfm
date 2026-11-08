@@ -10,9 +10,10 @@ import {
   STATS_SYNC_FULL_HARD_CAP,
   STATS_SYNC_MAX_HARD_CAP,
   resolvePersistWatermark,
+  syncRecentToStats,
 } from "../src/stats-sync";
 import { buildLibraryIndexes, resolveSongId } from "../src/match";
-import { statsPluginUrl } from "../src/stats-client";
+import { statsPluginUrl, probeStatsAvailable } from "../src/stats-client";
 
 describe("normalizeHardCap", () => {
   it("defaults and clamps to max 5000", () => {
@@ -148,5 +149,52 @@ describe("resolvePersistWatermark", () => {
     expect(resolvePersistWatermark(2000, 500)).toBe(2000);
     expect(resolvePersistWatermark(0, 0)).toBe(0);
     expect(resolvePersistWatermark(undefined, 99)).toBe(99);
+  });
+});
+
+describe("probeStatsAvailable", () => {
+  it("returns true when fetchFn resolves", async () => {
+    await expect(
+      probeStatsAvailable(async () => ({ data: { records: [] } }))
+    ).resolves.toBe(true);
+  });
+
+  it("returns false when fetchFn throws (plugin missing/down)", async () => {
+    await expect(
+      probeStatsAvailable(async () => {
+        throw new Error("stats 插件响应 HTTP 404");
+      })
+    ).resolves.toBe(false);
+  });
+});
+
+describe("syncRecentToStats gate when stats unavailable", () => {
+  it("fails fast with friendly reason and keeps watermark", async () => {
+    const result = await syncRecentToStats({
+      scrobbler: {
+        getRecentTracks: async () => {
+          throw new Error("should not fetch recent when stats unavailable");
+        },
+      } as any,
+      username: "u",
+      songsApi: {
+        list: async () => {
+          throw new Error("should not list library when stats unavailable");
+        },
+      },
+      hardCap: 50,
+      watermarkUts: 12345,
+      fetchFn: async () => {
+        throw new Error("stats down");
+      },
+      now: () => 1_700_000_000_000,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("播放统计");
+      expect(result.watermarkUts).toBe(12345);
+      expect(result.fetched).toBe(0);
+      expect(result.imported).toBe(0);
+    }
   });
 });

@@ -217,7 +217,7 @@ export async function syncRecentToStats(deps: StatsSyncDeps): Promise<StatsSyncR
         ts,
         ...partial,
         nearWindowStrategy: NEAR_WINDOW_STRATEGY,
-        reason: "播放统计插件未安装或未启用",
+        reason: "请先安装并启用官方「播放统计」插件",
       };
     }
 

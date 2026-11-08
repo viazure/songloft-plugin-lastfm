@@ -32,8 +32,11 @@ import {
 } from "./stats-sync";
 import { runStatsSync, enqueueFullStatsSync, isStatsSyncBusy, isFullStatsSyncQueued } from "./stats-sync-run";
 import { statsScheduler } from "./stats-schedule";
+import { probeStatsAvailable } from "./stats-client";
 
 const router = createRouter();
+
+const STATS_PLUGIN_UNAVAILABLE = "请先安装并启用官方「播放统计」插件";
 
 function readJson(req: HTTPRequest): Record<string, unknown> {
   const body = req.body;
@@ -553,6 +556,7 @@ router.get("/api/stats-sync", async () => {
   const last = await loadStatsSyncState();
   const schedule = statsScheduler.getState();
   const settings = await loadSettings();
+  const statsAvailable = await probeStatsAvailable();
   return jsonResponse({
     ok: true,
     last,
@@ -562,6 +566,7 @@ router.get("/api/stats-sync", async () => {
     fullHardCap: STATS_SYNC_FULL_HARD_CAP,
     maxHardCap: STATS_SYNC_MAX_HARD_CAP,
     running: isStatsSyncBusy(),
+    statsAvailable,
     schedule: {
       enabled: !!schedule.enabled,
       intervalHours: schedule.intervalHours,
@@ -580,6 +585,13 @@ router.get("/api/stats-sync", async () => {
 router.post("/api/stats-sync", async (req) => {
   const body = readJson(req);
   const mode = body.mode === "full" ? "full" : "incremental";
+  const statsAvailable = await probeStatsAvailable();
+  if (!statsAvailable) {
+    return jsonResponse(
+      { ok: false, error: STATS_PLUGIN_UNAVAILABLE, statsAvailable: false },
+      503
+    );
+  }
   // Full backfill exceeds host ~30s plugin-call timeout → accept + run on timer.
   if (mode === "full") {
     const enq = enqueueFullStatsSync("manual");

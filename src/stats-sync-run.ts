@@ -178,7 +178,7 @@ async function executeStatsSync(
       last: stored,
       summary: formatStatsSyncSummary(stored as StatsSyncResult),
       source,
-      httpStatus: /未安装|未启用/.test(reason) ? 503 : 400,
+      httpStatus: /未安装|未启用|请先安装/.test(reason) ? 503 : 400,
     };
   }
 

@@ -156,10 +156,32 @@ function applyStatsScheduleFields(settingsOrSchedule) {
   }
 }
 
+
+
+/** Official stats plugin (entry=stats) probe result + Last.fm connection for UI gates. */
+let statsPluginAvailable = false;
+let statsNeedConnection = true;
+
+function applyStatsControls() {
+  const available = !!statsPluginAvailable;
+  const hint = $("statsPluginHint");
+  if (hint) {
+    if (available) hint.classList.add("hidden");
+    else hint.classList.remove("hidden");
+  }
+  const canSync = available && !statsNeedConnection;
+  if ($("btnSyncStats")) $("btnSyncStats").disabled = !canSync;
+  if ($("btnSyncStatsFull")) $("btnSyncStatsFull").disabled = !canSync;
+  ["statsSyncHardCap", "btnSaveStatsCap", "statsScheduleEnabled", "btnSaveStatsSchedule"].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = !available;
+  });
+}
+
 async function loadStatsSync() {
   const el = $("statsSyncLast");
   const nextEl = $("statsSyncNext");
-  if (!el) return;
+  if (!el) return null;
   try {
     const res = await apiGet("/api/stats-sync");
     el.textContent = "上次：" + (res.summary || "尚未同步过");
@@ -168,8 +190,14 @@ async function loadStatsSync() {
     if (typeof res.hardCap === "number" && $("statsSyncHardCap")) {
       $("statsSyncHardCap").value = String(res.hardCap);
     }
+    statsPluginAvailable = typeof res.statsAvailable === "boolean" ? res.statsAvailable : false;
+    applyStatsControls();
+    return res;
   } catch (e) {
     el.textContent = "上次：无法读取（" + friendlyLogMessage(e.message) + "）";
+    statsPluginAvailable = false;
+    applyStatsControls();
+    return null;
   }
 }
 
@@ -318,8 +346,9 @@ async function refresh(opts) {
   updateLoveCurrent(st.lastPlay);
 
   const loveDisabled = connectionState((st && st.status) || {}) !== "connected";
+  statsNeedConnection = loveDisabled;
   // P3: playlist name can be saved while disconnected; sync/love still need session.
-  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved", "btnSyncStats", "btnSyncStatsFull"].forEach((id) => {
+  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved"].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = loveDisabled;
   });
@@ -329,11 +358,8 @@ async function refresh(opts) {
   if ($("lovedScheduleEnabled")) $("lovedScheduleEnabled").disabled = false;
   if ($("lovedScheduleIntervalHours")) $("lovedScheduleIntervalHours").disabled = false;
   if ($("btnSaveLovedSchedule")) $("btnSaveLovedSchedule").disabled = false;
-  if ($("statsScheduleEnabled")) $("statsScheduleEnabled").disabled = false;
-  if ($("statsSyncHardCap")) $("statsSyncHardCap").disabled = false;
-  if ($("btnSaveStatsCap")) $("btnSaveStatsCap").disabled = false;
-  if ($("btnSaveStatsSchedule")) $("btnSaveStatsSchedule").disabled = false;
   applyStatsScheduleFields(settings);
+  applyStatsControls();
 
   if (options.flash) setFlash(options.flash, options.flashCls || "muted");
   else if (!options.keepFlash) setFlash("");
@@ -700,16 +726,15 @@ $("btnSyncStats") && ($("btnSyncStats").onclick = async () => {
     setFlash("播放统计同步失败: " + friendlyLogMessage(e.message), "err");
     try { await loadStatsSync(); } catch (_) {}
   } finally {
-    if (btn) btn.disabled = false;
-    if (fullBtn) fullBtn.disabled = false;
+    applyStatsControls();
   }
 });
 
 $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
   const ok = window.confirm(
-    "尽量同步：单次最多拉取约 5000 条 recent scrobble，并忽略水位一次以便回填。\n" +
-      "只写入曲库已有歌曲；未匹配会跳过。已导入的靠近窗/精确去重。\n" +
-      "可能较慢（后台进行），确定继续？"
+    "尽量同步：单次最多约 5000 条，并暂时忽略水位以便首次回填。\n" +
+      "只写入曲库已有歌曲；未匹配会跳过。已导入的会去重。\n" +
+      "需已安装官方「播放统计」插件。可能较慢（后台进行），确定继续？"
   );
   if (!ok) return;
   const btn = $("btnSyncStatsFull");
@@ -781,7 +806,6 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
     setFlash("尽量同步失败: " + friendlyLogMessage(e.message), "err");
     try { await loadStatsSync(); } catch (_) {}
   } finally {
-    if (btn) btn.disabled = false;
-    if (incrBtn) incrBtn.disabled = false;
+    applyStatsControls();
   }
 });
