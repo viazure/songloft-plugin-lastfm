@@ -81,7 +81,7 @@
 </head>
 <body>
   <h1>Last.fm</h1>
-  <p class="muted">应用凭证证明 App 是谁；连接账号才允许往你的 Last.fm 记播放。</p>
+  <p class="muted">应用凭证用来确认这个 App 的身份；连上 Last.fm 账号后，才能往你的账号里记播放。</p>
 
   <div id="statusBar" class="status-bar warn">
     <div>
@@ -98,10 +98,10 @@
   <!-- 1. 连接账号：未连接展开；已连接整块隐藏。必须在播放记录之上 -->
   <div class="card connect-panel" id="connectPanel">
     <h2>连接账号</h2>
-    <p class="muted">点上方「连接账号」会打开 Last.fm 网页并自动完成；也可在下方用用户名密码。</p>
+    <p class="muted">点「连接账号」会打开 Last.fm 网页，点一下允许就好，剩下的自动完成；也可以展开用用户名密码登录。</p>
 
     <div id="connectWaiting" class="connect-waiting hidden">
-      <div id="connectWaitingText">正在等待网页授权…</div>
+      <div id="connectWaitingText">正在等你授权…</div>
       <div class="row" style="margin-top:8px">
         <button type="button" id="btnFinishNow" class="secondary">我已允许，完成连接</button>
         <button type="button" id="btnCancelWait" class="secondary">取消</button>
@@ -109,9 +109,9 @@
     </div>
 
     <details class="block" id="altLogin" style="margin:12px 0 0;border-style:dashed">
-      <summary style="font-size:.95rem">改用用户名密码连接</summary>
+      <summary style="font-size:.95rem">改用用户名密码登录</summary>
       <div class="body">
-        <p class="muted">密码仅用于一次登录，不落盘。</p>
+        <p class="muted">密码只用于这次登录，不会保存。</p>
         <label>Last.fm 用户名</label>
         <input id="username" type="text" autocomplete="username" />
         <label>密码</label>
@@ -127,12 +127,12 @@
   <!-- 2. 播放记录 -->
   <div class="card" id="section-scrobble">
     <h2>播放记录（Scrobble）</h2>
-    <p class="muted">不必听完整首：达到「百分比」与「最长秒数」中<strong>较早</strong>者即可在 <code>finish</code>/<code>skip</code> 时记录。</p>
+    <p class="muted">不用听完一整首：听到「百分比」或「最长秒数」里<strong>先到</strong>的那个线，切歌或播完时就会记下这次播放。</p>
     <div class="check">
       <input id="enabled" type="checkbox" checked />
       <label for="enabled">启用播放记录 <span id="enabledHint" class="muted"></span></label>
     </div>
-    <div class="check"><input id="onlyMiot" type="checkbox" /><label for="onlyMiot">只同步 source=miot（智能音箱）</label></div>
+    <div class="check"><input id="onlyMiot" type="checkbox" /><label for="onlyMiot">只记录智能音箱（miot）的播放</label></div>
     <div class="grid2">
       <div>
         <label>记录歌曲最短时长（秒）</label>
@@ -147,7 +147,7 @@
         <input id="delayMaxSec" type="number" min="1" max="3600" step="1" value="240" />
       </div>
     </div>
-    <p class="muted" style="margin-top:12px">半数到达后会立即 scrobble。普通播放有用；音箱/miot 常无中途进度，通常仍播完才记。</p>
+    <p class="muted" style="margin-top:12px">到达你设的「百分比」或「最长秒数」（先到的那个）后会立刻记下。有中途进度时才管用；音箱常报不了中途进度，一般要整首播完才记。</p>
     <div class="row">
       <button id="btnSave">保存播放记录设置</button>
       <button class="secondary" id="btnReload">刷新状态</button>
@@ -159,14 +159,14 @@
   <!-- 2a. 红心（Last.fm love，单向手动） -->
   <div class="card" id="section-love">
     <h2>红心（Last.fm）</h2>
-    <p class="muted">把<strong>最近一次开始播放</strong>的曲子标成喜欢 / 取消喜欢。只写到 Last.fm，不会改 Songloft 里的红心。手动操作不受「只同步音箱」限制。</p>
+    <p class="muted">把<strong>最近一次开始播放</strong>的那首在 Last.fm 上标喜欢或取消喜欢。只写 Last.fm，不动 Songloft 里的红心。手动操作不受「只记录音箱」开关影响。</p>
     <div id="loveCurrent" class="muted" style="margin-top:8px">当前曲：还没有播放记录。先听一首，或下面手动填。</div>
     <div class="row">
       <button type="button" id="btnLove">红心当前曲</button>
       <button type="button" class="secondary" id="btnUnlove">取消红心</button>
     </div>
     <details class="block" style="margin:12px 0 0;border-style:dashed">
-      <summary style="font-size:.95rem">手动指定曲目（探测）</summary>
+      <summary style="font-size:.95rem">手动指定一首歌试试</summary>
       <div class="body">
         <div class="grid2">
           <div>
@@ -179,8 +179,8 @@
           </div>
         </div>
         <div class="row">
-          <button type="button" class="secondary" id="btnLoveProbe">探测红心</button>
-          <button type="button" class="secondary" id="btnUnloveProbe">探测取消红心</button>
+          <button type="button" class="secondary" id="btnLoveProbe">试一下标红心</button>
+          <button type="button" class="secondary" id="btnUnloveProbe">试一下取消红心</button>
         </div>
       </div>
     </details>
@@ -190,7 +190,7 @@
   <!-- 2a2. Loved → 歌单（弱替代，非宿主红心双向） -->
   <div class="card" id="section-loved-playlist">
     <h2>Loved 歌单</h2>
-    <p class="muted">把 Last.fm 上的喜欢曲目<strong>导入/覆盖刷新</strong>到本机歌单（默认 <code>Last.fm Loved</code>；可改名）。与曲库精确匹配艺人+曲名。不是 Songloft 红心双向；未命中的曲不会自动下载。改名后下次同步只覆盖<strong>当前名</strong>那一张，旧名歌单不会自动删除。</p>
+    <p class="muted">把 Last.fm 上喜欢的歌同步成本机歌单：按「艺人 + 歌名」和曲库比对，对上的才进歌单，每次同步都会覆盖刷新这张歌单。它和 Songloft 的红心不互通；对不上的歌也不会帮你下载。改名后，下次同步只覆盖新名字那张，旧歌单留着不删。</p>
     <label for="lovedPlaylistName">Loved 歌单名</label>
     <input id="lovedPlaylistName" type="text" placeholder="Last.fm Loved" />
     <div id="lovedSyncLast" class="muted" style="margin-top:8px">上次：尚未同步过</div>
@@ -212,24 +212,24 @@
       </select>
       <button type="button" class="secondary" id="btnSaveLovedSchedule">保存定时</button>
     </div>
-    <p class="muted" style="margin-top:6px">默认关闭。打开后按间隔自动覆盖刷新（与手动同步同一套）；与 keep-alive / onlyMiot 无关。断连到点仍会尝试，失败写入观测，不关开关。</p>
+    <p class="muted" style="margin-top:6px">默认关着。打开后每隔一段时间自动覆盖刷新一次，和手动同步一样。账号断连到点也会尝试，失败就记一笔，不会自己关掉。</p>
   </div>
 
   <!-- 2a3. Last.fm → 播放统计 -->
   <div class="card" id="section-stats-sync">
     <h2>同步到播放统计</h2>
-    <p class="muted">把 Last.fm 最近听歌记录里、<strong>本地曲库已有</strong>的歌曲，写入官方「播放统计」插件，让排行、趋势和推荐更准。对不上曲库的会跳过，不会凭空造歌。匹配规则与 Loved 相同（艺人 + 曲名）；与已有记录同曲且 <code>|Δt|≤120s</code> 时跳过，避免和本机播放重复计数。</p>
-    <div id="statsPluginHint" class="hint hidden" role="status">须先安装并启用官方「播放统计」插件（插件商店可搜到）。未检测到时，下方同步与定时相关操作不可用。</div>
+    <p class="muted">把 Last.fm 里最近听过的歌中、<strong>本地曲库已有</strong>的，记进官方「播放统计」插件，排行和推荐会更准。曲库里没有的会跳过，不会凭空多出歌。按「艺人 + 歌名」来对上；和本机刚记过的同一条（前后 120 秒内）会跳过，免得重复计数。</p>
+    <div id="statsPluginHint" class="hint hidden" role="status">要先用这个，得装官方「播放统计」插件（插件商店里搜得到）。没检测到的话，下面的同步和定时都是灰的。</div>
     <div id="statsSyncLast" class="muted" style="margin-top:8px">上次：尚未同步过</div>
     <div id="statsSyncNext" class="muted" style="margin-top:4px">下次：—</div>
     <div class="row" style="margin-top:10px; align-items:center; gap:12px; flex-wrap:wrap">
       <button type="button" id="btnSyncStats">同步到播放统计</button>
-      <button type="button" class="secondary" id="btnSyncStatsFull" title="单次最多约 5000 条，忽略水位一次以便首次回填；已导入的靠近窗/精确去重">尽量同步</button>
+      <button type="button" class="secondary" id="btnSyncStatsFull" title="单次最多约读取/处理 5000 条历史，先不管上次同步到哪里，适合第一次尽量往前补；已经同步过的会自动跳过。不保证一次补齐全部历史。">尽量同步</button>
       <label for="statsSyncHardCap" style="margin:0">日常上限</label>
       <input id="statsSyncHardCap" type="number" min="1" max="5000" value="500" style="width:88px" />
       <button type="button" class="secondary" id="btnSaveStatsCap">保存上限</button>
     </div>
-    <p class="muted" style="margin-top:6px">「同步到播放统计」按日常上限做增量；「尽量同步」单次最多约 5000 条并暂时忽略水位，适合首次尽量灌满（已写入的会去重跳过）。定时只走日常增量，不会自动「尽量同步」。结果会显示：拉取 / 命中 / 导入 / 近窗跳过 / 未匹配。</p>
+    <p class="muted" style="margin-top:6px">「同步到播放统计」每次最多处理「日常上限」那么多条历史，从上次停下的地方继续。「尽量同步」单次最多约读取/处理 5000 条历史，先不管上次进度，适合第一次尽量往前补（同步过的会自动跳过；不保证一次补齐全部）。定时只按日常那种走，不会自动帮你「尽量同步」。结果会显示：拉到 / 对上 / 写入 / 跳过（怕重复）/ 没对上。</p>
     <div class="row" style="margin-top:12px; align-items:center; gap:12px; flex-wrap:wrap">
       <label style="display:flex; align-items:center; gap:6px; margin:0">
         <input id="statsScheduleEnabled" type="checkbox" />
@@ -238,12 +238,12 @@
       <span class="muted">间隔固定 24 小时</span>
       <button type="button" class="secondary" id="btnSaveStatsSchedule">保存定时</button>
     </div>
-    <p class="muted" style="margin-top:6px">默认关闭。与 Loved 定时互斥（忙则跳过）。同样依赖官方「播放统计」插件可用。</p>
+    <p class="muted" style="margin-top:6px">默认关着。Loved 定时和播放统计定时都可以开；如果另一项正在同步，这次会跳过。也要等官方「播放统计」插件可用才生效。</p>
   </div>
 <!-- 2b. 最近 scrobble 观测 -->
   <div class="card" id="section-recent">
     <h2>最近记录</h2>
-    <p class="muted">本机最近成功 / 失败的 scrobble、红心、Loved 歌单与播放统计同步（最多 20 条），方便排查。密钥不会出现在这里。</p>
+    <p class="muted">最近 20 条成功或失败的记录：播放记录、红心、Loved 歌单和播放统计同步都在这儿，出问题先看这里。密钥不会出现。</p>
     <div class="row" style="margin-top:8px">
       <button type="button" class="secondary" id="btnReloadScrobbles">刷新记录</button>
     </div>
@@ -254,7 +254,7 @@
   <details class="block" id="section-creds">
     <summary>应用凭证（高级）</summary>
     <div class="body">
-      <p class="muted">这是 <strong>App 身份</strong>（API Key / Shared Secret），不是 Last.fm 登录。到 <a href="https://www.last.fm/api/account/create" target="_blank" rel="noreferrer">创建应用</a> 获取。密钥只存本机，不会写入日志。</p>
+      <p class="muted">这是 <strong>App 的身份凭证</strong>（API Key / Shared Secret），不是你的 Last.fm 登录。到 <a href="https://www.last.fm/api/account/create" target="_blank" rel="noreferrer">创建应用</a> 获取。密钥只存在本机，不会写进日志。</p>
       <label>API Key（留空则不改已保存的）</label>
       <input id="apiKey" type="password" autocomplete="off" placeholder="已保存则留空不改" />
       <label>Shared Secret（留空则不改已保存的）</label>
@@ -271,12 +271,12 @@
   <details class="block" id="section-diag">
     <summary>诊断</summary>
     <div class="body">
-      <p class="muted">不依赖音箱的手动探测。请勿短时间反复点击，以免触发 Last.fm 限流。</p>
+      <p class="muted">手动测试，不经过音箱。别短时间连着点太多次，会触发 Last.fm 的限流。</p>
       <div class="row">
-        <button class="secondary" id="btnNp">测 Now Playing</button>
-        <button class="secondary" id="btnSc">测 Scrobble</button>
-        <button class="secondary" id="btnLoveTest">测红心</button>
-        <button class="secondary" id="btnUnloveTest">测取消红心</button>
+        <button class="secondary" id="btnNp">试一下正在播放</button>
+        <button class="secondary" id="btnSc">试一下记播放</button>
+        <button class="secondary" id="btnLoveTest">试一下红心</button>
+        <button class="secondary" id="btnUnloveTest">试一下取消红心</button>
         <button class="secondary" id="btnReload2">刷新日志</button>
       </div>
       <label>最近日志</label>

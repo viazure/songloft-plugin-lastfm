@@ -47,12 +47,12 @@ export function formatLovedSyncSummary(r: LovedPlaylistSyncResult | null | undef
   if (!r.ok) {
     const partial =
       r.loved > 0
-        ? `（已拉到 loved ${r.loved}·命中 ${r.matched}·未命中 ${r.unmatched}）`
+        ? `（已拉到 loved ${r.loved}·对上 ${r.matched}·没对上 ${r.unmatched}）`
         : "";
     return `${when} · 失败：${r.reason}${partial}`;
   }
   const trunc = r.truncated ? " · 已截断" : "";
-  return `${when} · loved ${r.loved} · 命中 ${r.matched} · 未命中 ${r.unmatched}${trunc}`;
+  return `${when} · loved ${r.loved} · 对上 ${r.matched} · 没对上 ${r.unmatched}${trunc}`;
 }
 
 /** List all library songs via plugin SDK (paged). */

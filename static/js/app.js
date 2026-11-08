@@ -21,13 +21,13 @@ function setFlash(text, cls) {
 
 
 const PATH_LABEL = {
-  "early-threshold": "提前阈值",
+  "early-threshold": "提前达标",
   finish: "播完",
-  skip: "跳过时达标",
-  switch: "切歌时达标",
-  replay: "重播前达标",
+  skip: "跳过时记下",
+  switch: "切歌时记下",
+  replay: "重播前记下",
   nowplaying: "正在播放",
-  test: "手动探测",
+  test: "手动测试",
   love: "红心",
   unlove: "取消红心",
   loved_playlist_sync: "Loved歌单",
@@ -44,7 +44,7 @@ function renderScrobbles(records) {
   if (!box) return;
   const list = Array.isArray(records) ? records.slice().reverse() : [];
   if (!list.length) {
-    box.innerHTML = '<div class="scrobble-empty">暂无记录。听几首歌或点「测 Scrobble」后会出现在这里。</div>';
+    box.innerHTML = '<div class="scrobble-empty">暂无记录。听几首歌或点「试一下记播放」后会出现在这里。</div>';
     return;
   }
   box.innerHTML = list.map((r) => {
@@ -261,7 +261,7 @@ function showWaiting(url) {
     ? ` <a href="${authUrl}" target="_blank" rel="noreferrer">再次打开授权页</a>`
     : "";
   $("connectWaitingText").innerHTML =
-    "已打开 Last.fm 授权页。请在网页点允许，然后回到这里——我们会自动完成连接。" + link;
+    "已打开 Last.fm 授权页。在网页上点「允许」，再回到这里，连接就自动完成了。" + link;
   $("connectPanel").classList.remove("hidden");
   $("connectPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -540,7 +540,7 @@ $("btnNp").onclick = async () => {
   try {
     const res = await apiPost("/api/test/nowplaying", {});
     if (!res.ok) throw new Error(res.error || "failed");
-    await refresh({ flash: "Now Playing 探测已发送", flashCls: "ok" });
+    await refresh({ flash: "正在播放测试已发送", flashCls: "ok" });
   } catch (e) {
     setFlash("Now Playing 失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
@@ -551,7 +551,7 @@ $("btnSc").onclick = async () => {
   try {
     const res = await apiPost("/api/test/scrobble", {});
     if (!res.ok) throw new Error(res.error || "failed");
-    await refresh({ flash: "Scrobble 探测已发送", flashCls: "ok" });
+    await refresh({ flash: "记播放测试已发送", flashCls: "ok" });
   } catch (e) {
     setFlash("Scrobble 失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
@@ -658,9 +658,9 @@ $("btnLoveTest").onclick = async () => {
   try {
     const res = await apiPost("/api/test/love", {});
     if (!res.ok) throw new Error(res.error || "failed");
-    await refresh({ flash: "红心探测已发送：" + res.artist + " — " + res.title, flashCls: "ok" });
+    await refresh({ flash: "红心测试已发送：" + res.artist + " — " + res.title, flashCls: "ok" });
   } catch (e) {
-    setFlash("红心探测失败: " + friendlyLogMessage(e.message), "err");
+    setFlash("红心测试失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
   }
 };
@@ -669,9 +669,9 @@ $("btnUnloveTest").onclick = async () => {
   try {
     const res = await apiPost("/api/test/unlove", {});
     if (!res.ok) throw new Error(res.error || "failed");
-    await refresh({ flash: "取消红心探测已发送：" + res.artist + " — " + res.title, flashCls: "ok" });
+    await refresh({ flash: "取消红心测试已发送：" + res.artist + " — " + res.title, flashCls: "ok" });
   } catch (e) {
-    setFlash("取消红心探测失败: " + friendlyLogMessage(e.message), "err");
+    setFlash("取消红心测试失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
   }
 };
@@ -732,9 +732,9 @@ $("btnSyncStats") && ($("btnSyncStats").onclick = async () => {
 
 $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
   const ok = window.confirm(
-    "尽量同步：单次最多约 5000 条，并暂时忽略水位以便首次回填。\n" +
-      "只写入曲库已有歌曲；未匹配会跳过。已导入的会去重。\n" +
-      "需已安装官方「播放统计」插件。可能较慢（后台进行），确定继续？"
+    "尽量同步：单次最多约读取/处理 5000 条历史，先不管上次同步到哪里，适合第一次尽量往前补（不保证一次补齐全部）。\n" +
+      "只写入曲库里已有的歌；对不上的会跳过；同步过的不会重复写。\n" +
+      "需要先装好官方「播放统计」插件。会慢一些（在后台跑），要继续吗？"
   );
   if (!ok) return;
   const btn = $("btnSyncStatsFull");
@@ -742,10 +742,10 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
   if (btn) btn.disabled = true;
   if (incrBtn) incrBtn.disabled = true;
   try {
-    setFlash("正在尽量同步 Last.fm → 播放统计（硬顶 5000）…", "muted");
+    setFlash("正在尽量同步 Last.fm → 播放统计（单次约 5000 条）…", "muted");
     const res = await apiPost("/api/stats-sync", { mode: "full" });
     if (res.accepted) {
-      setFlash("尽量同步已开始，后台进行中…", "muted");
+      setFlash("尽量同步已开始，正在后台跑…", "muted");
       const prevTs = res.last && res.last.ts;
       let finalSummary = res.summary || "";
       // ok | fail | skipped | timeout — never fake "完成" on skip/fail
@@ -787,7 +787,7 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
         });
       } else if (outcome === "skipped") {
         await refresh({
-          flash: "尽量同步未执行（忙或已跳过）：" + finalSummary,
+          flash: "尽量同步没跑成（正忙或已跳过）：" + finalSummary,
           flashCls: "err",
         });
       } else {

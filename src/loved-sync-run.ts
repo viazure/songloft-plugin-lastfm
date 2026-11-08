@@ -127,7 +127,7 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
     };
   }
 
-  const summaryBits = `loved ${result.loved} · 命中 ${result.matched} · 未命中 ${result.unmatched}`;
+  const summaryBits = `loved ${result.loved} · 对上 ${result.matched} · 没对上 ${result.unmatched}`;
   const truncNote = result.truncated ? " · truncated@1000" : "";
   const idNote = result.playlistIdChanged ? " · playlist id changed" : "";
   const targetNote = result.targetChanged ? " · 目标歌单已变" : "";

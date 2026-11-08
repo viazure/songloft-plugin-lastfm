@@ -119,8 +119,8 @@ describe("formatLovedSyncSummary", () => {
     expect(fail).toContain("失败");
     expect(fail).toContain("playlist write failed");
     expect(fail).toContain("loved 12");
-    expect(fail).toContain("命中 5");
-    expect(fail).toContain("未命中 7");
+    expect(fail).toContain("对上 5");
+    expect(fail).toContain("没对上 7");
   });
 
   it("formats success N/M/K", () => {
@@ -137,8 +137,8 @@ describe("formatLovedSyncSummary", () => {
       unmatchedSamples: [],
     });
     expect(s).toContain("loved 10");
-    expect(s).toContain("命中 7");
-    expect(s).toContain("未命中 3");
+    expect(s).toContain("对上 7");
+    expect(s).toContain("没对上 3");
   });
 
   it("playlist name constant", () => {

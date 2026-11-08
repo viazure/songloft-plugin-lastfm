@@ -165,15 +165,15 @@ export function formatStatsSyncSummary(r: StatsSyncResult | null | undefined): s
   if (!r) return "尚未同步过";
   const when = new Date(r.ts).toLocaleString();
   const base =
-    `拉取 ${r.fetched} · 命中 ${r.matched} · 导入 ${r.imported}` +
-    ` · 跳过(近窗) ${r.skippedNear}` +
-    (r.skippedExact ? ` · 跳过(已存在) ${r.skippedExact}` : "") +
-    ` · 未匹配 ${r.unmatched}`;
+    `拉到 ${r.fetched} · 对上 ${r.matched} · 写入 ${r.imported}` +
+    ` · 跳过（怕重复） ${r.skippedNear}` +
+    (r.skippedExact ? ` · 跳过（已存在） ${r.skippedExact}` : "") +
+    ` · 没对上 ${r.unmatched}`;
   if (!r.ok) {
     return `${when} · 失败：${r.reason}（${base}）`;
   }
   const trunc = r.truncated ? " · 已截断" : "";
-  return `${when} · ${base}${trunc} · 近窗=${r.nearWindowStrategy}`;
+  return `${when} · ${base}${trunc} · 同曲前后 120 秒内不重复`;
 }
 
 export interface StatsSyncDeps {

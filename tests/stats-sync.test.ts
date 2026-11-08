@@ -116,12 +116,12 @@ describe("formatStatsSyncSummary", () => {
       watermarkUts: 99,
       nearWindowStrategy: NEAR_WINDOW_STRATEGY,
     });
-    expect(s).toContain("拉取 10");
-    expect(s).toContain("命中 8");
-    expect(s).toContain("导入 5");
-    expect(s).toContain("跳过(近窗) 2");
-    expect(s).toContain("未匹配 2");
-    expect(s).toContain(NEAR_WINDOW_STRATEGY);
+    expect(s).toContain("拉到 10");
+    expect(s).toContain("对上 8");
+    expect(s).toContain("写入 5");
+    expect(s).toContain("跳过（怕重复） 2");
+    expect(s).toContain("没对上 2");
+    expect(s).toContain("同曲前后 120 秒内不重复");
   });
 });
 

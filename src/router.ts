@@ -609,7 +609,7 @@ router.post("/api/stats-sync", async (req) => {
       running: true,
       last,
       summary: formatStatsSyncSummary(last as any),
-      message: "尽量同步已开始（后台进行，请稍后刷新状态）",
+      message: "尽量同步已开始，正在后台跑（请稍后刷新状态）",
     });
   }
   // Queued full backfill may not hold the lock yet — block incremental early (409).
