@@ -709,7 +709,7 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
   const ok = window.confirm(
     "尽量同步：单次最多拉取约 5000 条 recent scrobble，并忽略水位一次以便回填。\n" +
       "只写入曲库已有歌曲；未匹配会跳过。已导入的靠近窗/精确去重。\n" +
-      "可能较慢，确定继续？"
+      "可能较慢（后台进行），确定继续？"
   );
   if (!ok) return;
   const btn = $("btnSyncStatsFull");
@@ -719,10 +719,33 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
   try {
     setFlash("正在尽量同步 Last.fm → 播放统计（硬顶 5000）…", "muted");
     const res = await apiPost("/api/stats-sync", { mode: "full" });
-    await refresh({
-      flash: "尽量同步完成：" + (res.summary || ""),
-      flashCls: "ok",
-    });
+    if (res.accepted) {
+      setFlash("尽量同步已开始，后台进行中…", "muted");
+      const prevTs = res.last && res.last.ts;
+      let finalSummary = res.summary || "";
+      for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const st = await apiGet("/api/stats-sync");
+        if (st && st.last && st.last.ts && st.last.ts !== prevTs && !st.running) {
+          finalSummary = st.summary || "";
+          break;
+        }
+        if (st && !st.running && st.last && prevTs && st.last.ts === prevTs && i > 2) {
+          // finished without state change? unlikely; keep waiting a bit then stop
+          if (i > 5) break;
+        }
+        setFlash("尽量同步进行中… (" + ((i + 1) * 2) + "s)", "muted");
+      }
+      await refresh({
+        flash: "尽量同步完成：" + finalSummary,
+        flashCls: "ok",
+      });
+    } else {
+      await refresh({
+        flash: "尽量同步完成：" + (res.summary || ""),
+        flashCls: "ok",
+      });
+    }
   } catch (e) {
     setFlash("尽量同步失败: " + friendlyLogMessage(e.message), "err");
     try { await loadStatsSync(); } catch (_) {}

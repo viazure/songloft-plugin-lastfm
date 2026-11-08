@@ -30,7 +30,7 @@ import {
   STATS_SYNC_FULL_HARD_CAP,
   STATS_SYNC_MAX_HARD_CAP,
 } from "./stats-sync";
-import { runStatsSync } from "./stats-sync-run";
+import { runStatsSync, enqueueFullStatsSync, isStatsSyncBusy } from "./stats-sync-run";
 import { statsScheduler } from "./stats-schedule";
 
 const router = createRouter();
@@ -561,6 +561,7 @@ router.get("/api/stats-sync", async () => {
     defaultHardCap: STATS_SYNC_DEFAULT_HARD_CAP,
     fullHardCap: STATS_SYNC_FULL_HARD_CAP,
     maxHardCap: STATS_SYNC_MAX_HARD_CAP,
+    running: isStatsSyncBusy(),
     schedule: {
       enabled: !!schedule.enabled,
       intervalHours: schedule.intervalHours,
@@ -579,6 +580,26 @@ router.get("/api/stats-sync", async () => {
 router.post("/api/stats-sync", async (req) => {
   const body = readJson(req);
   const mode = body.mode === "full" ? "full" : "incremental";
+  // Full backfill exceeds host ~30s plugin-call timeout → accept + run on timer.
+  if (mode === "full") {
+    const enq = enqueueFullStatsSync("manual");
+    if (!enq.accepted) {
+      return jsonResponse(
+        { ok: false, skipped: true, error: "skipped_busy", reason: "skipped_busy" },
+        409
+      );
+    }
+    const last = await loadStatsSyncState();
+    return jsonResponse({
+      ok: true,
+      accepted: true,
+      mode: "full",
+      running: true,
+      last,
+      summary: formatStatsSyncSummary(last as any),
+      message: "尽量同步已开始（后台进行，请稍后刷新状态）",
+    });
+  }
   const result = await runStatsSync("manual", { mode });
   if (result.skipped) {
     return jsonResponse(

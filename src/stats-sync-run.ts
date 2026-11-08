@@ -232,6 +232,53 @@ export async function runStatsSync(
   return result;
 }
 
+
+/** Host plugin-call timeout is ~30s; full backfill needs longer. Queue on timer. */
+let fullStatsSyncQueued = false;
+
+export function isFullStatsSyncQueued(): boolean {
+  return fullStatsSyncQueued;
+}
+
+export function isStatsSyncBusy(): boolean {
+  return fullStatsSyncQueued || lovedScheduler.isBusy();
+}
+
+/**
+ * Accept「尽量同步」immediately and run under exclusive lock on a macrotask
+ * so the HTTP handler can return before host scheduler timeout.
+ */
+export function enqueueFullStatsSync(source: StatsSyncSource = "manual"): {
+  accepted: true;
+  source: StatsSyncSource;
+} | { accepted: false; skipped: true; reason: "skipped_busy"; source: StatsSyncSource } {
+  if (fullStatsSyncQueued || lovedScheduler.isBusy()) {
+    return { accepted: false, skipped: true, reason: "skipped_busy", source };
+  }
+  fullStatsSyncQueued = true;
+  setTimeout(() => {
+    void runStatsSync(source, { mode: "full" })
+      .then((result) => {
+        if (result.skipped) {
+          songloft.log.info("[lastfm] full stats sync skipped_busy after queue");
+          return;
+        }
+        if (result.ok) {
+          songloft.log.info(`[lastfm] full stats sync ok: ${result.summary}`);
+        } else {
+          songloft.log.warn(`[lastfm] full stats sync failed: ${result.error}`);
+        }
+      })
+      .catch((e) => {
+        songloft.log.error(`[lastfm] full stats sync crashed: ${String(e)}`);
+      })
+      .finally(() => {
+        fullStatsSyncQueued = false;
+      });
+  }, 0);
+  return { accepted: true, source };
+}
+
 export function bindStatsScheduleTick(): void {
   statsScheduler.setOnTick(async () => {
     const result = await runStatsSync("scheduled");
