@@ -8,6 +8,7 @@ import {
   syncRecentToStats,
   type StatsSyncResult,
   NEAR_WINDOW_STRATEGY,
+  STATS_SYNC_FULL_HARD_CAP,
 } from "./stats-sync";
 import { statsScheduler } from "./stats-schedule";
 import {
@@ -23,6 +24,13 @@ import {
 } from "./store";
 
 export type StatsSyncSource = "manual" | "scheduled";
+
+/** incremental = settings hardCap + watermark; full = 尽量同步 (high cap, ignore watermark once). */
+export type StatsSyncMode = "incremental" | "full";
+
+export interface StatsSyncRunOptions {
+  mode?: StatsSyncMode;
+}
 
 export interface StatsSyncRunOk {
   ok: true;
@@ -73,11 +81,24 @@ function toStored(result: StatsSyncResult, hardCap: number): StatsSyncStored {
   return base;
 }
 
-async function executeStatsSync(source: StatsSyncSource): Promise<StatsSyncRunOk | StatsSyncRunFail> {
+async function executeStatsSync(
+  source: StatsSyncSource,
+  opts?: StatsSyncRunOptions
+): Promise<StatsSyncRunOk | StatsSyncRunFail> {
   await refreshScrobbler();
   const settings = await loadSettings();
   const prev = await loadStatsSyncState();
-  const hardCap = normalizeHardCap(settings.statsSyncHardCap);
+  const mode: StatsSyncMode = opts?.mode === "full" ? "full" : "incremental";
+  // Scheduled ticks must stay incremental (never inherit a stale full intent).
+  const effectiveMode: StatsSyncMode =
+    source === "scheduled" ? "incremental" : mode;
+  const hardCap =
+    effectiveMode === "full"
+      ? STATS_SYNC_FULL_HARD_CAP
+      : normalizeHardCap(settings.statsSyncHardCap);
+  // Full backfill ignores watermark once; near-window + import exact-dedupe still prevent doubles.
+  const watermarkUts =
+    effectiveMode === "full" ? 0 : prev?.watermarkUts || 0;
   const client = getScrobbler();
 
   if (!client || !(await client.isReady()) || !settings.username) {
@@ -124,7 +145,7 @@ async function executeStatsSync(source: StatsSyncSource): Promise<StatsSyncRunOk
     username: settings.username,
     songsApi: songloft.songs,
     hardCap,
-    watermarkUts: prev?.watermarkUts || 0,
+    watermarkUts,
   });
 
   if (!result.ok) {
@@ -172,16 +193,20 @@ async function executeStatsSync(source: StatsSyncSource): Promise<StatsSyncRunOk
   }
   await appendLog(
     "info",
-    `stats sync ok (${source}): fetched=${result.fetched} matched=${result.matched} imported=${result.imported} near=${result.skippedNear} unmatched=${result.unmatched} wm=${result.watermarkUts}`
+    `stats sync ok (${source}/${effectiveMode}): fetched=${result.fetched} matched=${result.matched} imported=${result.imported} near=${result.skippedNear} unmatched=${result.unmatched} wm=${result.watermarkUts} hardCap=${hardCap}`
   );
   return { ok: true, last: stored, summary, source };
 }
 
 /**
  * Run under Loved's exclusive lock so Loved↔stats never double-write concurrently.
+ * mode=full →「尽量同步」: hardCap=STATS_SYNC_FULL_HARD_CAP, watermark ignored for this run.
  */
-export async function runStatsSync(source: StatsSyncSource): Promise<StatsSyncRunResult> {
-  const gate = await lovedScheduler.runExclusive(() => executeStatsSync(source));
+export async function runStatsSync(
+  source: StatsSyncSource,
+  opts?: StatsSyncRunOptions
+): Promise<StatsSyncRunResult> {
+  const gate = await lovedScheduler.runExclusive(() => executeStatsSync(source, opts));
   if (gate.skipped) {
     await appendLog("info", `stats sync ${gate.reason} (${source})`);
     return { ok: false, skipped: true, reason: "skipped_busy", source };

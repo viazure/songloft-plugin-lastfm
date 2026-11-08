@@ -218,15 +218,17 @@
   <!-- 2a3. Last.fm → 播放统计 -->
   <div class="card" id="section-stats-sync">
     <h2>同步到播放统计</h2>
-    <p class="muted">把 Last.fm <strong>历史 scrobble</strong>（recent tracks）写成官方「播放统计」插件的 PlayRecord。只做 feeder；排行/最近播放仍看 stats。不包含 loved / top / 正在播放半条。匹配复用 Loved 的艺人+曲名；未命中跳过。近窗策略：与已有 stats 同曲 <code>|Δt|≤120s</code> 跳过，避免与本机 finish 双计。<strong>禁止</strong>在 scrobble 成功后再写 stats。</p>
+    <p class="muted">把 Last.fm <strong>历史 scrobble</strong>（recent tracks）写成官方「播放统计」插件的 PlayRecord。只同步<strong>曲库已有歌曲</strong>的历史播放；未匹配会跳过（不会凭空造歌）。只做 feeder；排行/最近播放仍看 stats。不包含 loved / top / 正在播放半条。匹配复用 Loved 的艺人+曲名。近窗策略：与已有 stats 同曲 <code>|Δt|≤120s</code> 跳过，避免与本机 finish 双计。<strong>禁止</strong>在 scrobble 成功后再写 stats。</p>
     <div id="statsSyncLast" class="muted" style="margin-top:8px">上次：尚未同步过</div>
     <div id="statsSyncNext" class="muted" style="margin-top:4px">下次：—</div>
     <div class="row" style="margin-top:10px; align-items:center; gap:12px; flex-wrap:wrap">
       <button type="button" id="btnSyncStats">同步到播放统计</button>
-      <label for="statsSyncHardCap" style="margin:0">单次上限</label>
-      <input id="statsSyncHardCap" type="number" min="1" max="1000" value="500" style="width:88px" />
+      <button type="button" class="secondary" id="btnSyncStatsFull" title="单次硬顶 5000，忽略水位一次以便回填；已导入的靠近窗/精确去重">尽量同步</button>
+      <label for="statsSyncHardCap" style="margin:0">日常上限</label>
+      <input id="statsSyncHardCap" type="number" min="1" max="5000" value="500" style="width:88px" />
       <button type="button" class="secondary" id="btnSaveStatsCap">保存上限</button>
     </div>
+    <p class="muted" style="margin-top:6px">「同步」按日常上限 + 水位增量；「尽量同步」单次拉高到 5000 并忽略水位一次（已导入的会跳过）。定时始终走日常增量，不会自动拉 5000。结果行保留：拉取 / 命中 / 导入 / 近窗跳过 / 未匹配。</p>
     <div class="row" style="margin-top:12px; align-items:center; gap:12px; flex-wrap:wrap">
       <label style="display:flex; align-items:center; gap:6px; margin:0">
         <input id="statsScheduleEnabled" type="checkbox" />

@@ -7,17 +7,23 @@ import {
   NEAR_WINDOW_MS,
   NEAR_WINDOW_STRATEGY,
   STATS_SYNC_DEFAULT_HARD_CAP,
+  STATS_SYNC_FULL_HARD_CAP,
+  STATS_SYNC_MAX_HARD_CAP,
 } from "../src/stats-sync";
 import { buildLibraryIndexes, resolveSongId } from "../src/match";
 import { statsPluginUrl } from "../src/stats-client";
 
 describe("normalizeHardCap", () => {
-  it("defaults and clamps", () => {
+  it("defaults and clamps to max 5000", () => {
     expect(normalizeHardCap(undefined)).toBe(STATS_SYNC_DEFAULT_HARD_CAP);
+    expect(STATS_SYNC_DEFAULT_HARD_CAP).toBe(500);
+    expect(STATS_SYNC_FULL_HARD_CAP).toBe(5000);
+    expect(STATS_SYNC_MAX_HARD_CAP).toBe(5000);
     expect(normalizeHardCap(0)).toBe(1);
     expect(normalizeHardCap(500)).toBe(500);
     expect(normalizeHardCap(1000)).toBe(1000);
-    expect(normalizeHardCap(5000)).toBe(1000);
+    expect(normalizeHardCap(5000)).toBe(5000);
+    expect(normalizeHardCap(99999)).toBe(STATS_SYNC_MAX_HARD_CAP);
     expect(normalizeHardCap("200")).toBe(200);
   });
 });

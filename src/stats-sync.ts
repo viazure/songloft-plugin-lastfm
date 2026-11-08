@@ -16,7 +16,10 @@ import {
 } from "./stats-client";
 
 export const STATS_SYNC_DEFAULT_HARD_CAP = 500;
-export const STATS_SYNC_MAX_HARD_CAP = 1000;
+/** Absolute clamp for settings / normalizeHardCap (also covers 尽量同步). */
+export const STATS_SYNC_MAX_HARD_CAP = 5000;
+/** One-shot「尽量同步」hard cap: page recent until this or watermark/exhaust. */
+export const STATS_SYNC_FULL_HARD_CAP = 5000;
 export const NEAR_WINDOW_MS = 120_000;
 /** Observation label for near-window strategy (shown in summaries). */
 export const NEAR_WINDOW_STRATEGY = "history/raw|Δt|≤120s";

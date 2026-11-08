@@ -23,7 +23,13 @@ import {
 import { resolveLovedPlaylistName, formatLovedSyncSummary } from "./loved-playlist";
 import { runLovedPlaylistSync } from "./loved-sync-run";
 import { lovedScheduler, normalizeIntervalHours } from "./loved-schedule";
-import { formatStatsSyncSummary, normalizeHardCap } from "./stats-sync";
+import {
+  formatStatsSyncSummary,
+  normalizeHardCap,
+  STATS_SYNC_DEFAULT_HARD_CAP,
+  STATS_SYNC_FULL_HARD_CAP,
+  STATS_SYNC_MAX_HARD_CAP,
+} from "./stats-sync";
 import { runStatsSync } from "./stats-sync-run";
 import { statsScheduler } from "./stats-schedule";
 
@@ -552,6 +558,9 @@ router.get("/api/stats-sync", async () => {
     last,
     summary: formatStatsSyncSummary(last as any),
     hardCap: normalizeHardCap(settings.statsSyncHardCap),
+    defaultHardCap: STATS_SYNC_DEFAULT_HARD_CAP,
+    fullHardCap: STATS_SYNC_FULL_HARD_CAP,
+    maxHardCap: STATS_SYNC_MAX_HARD_CAP,
     schedule: {
       enabled: !!schedule.enabled,
       intervalHours: schedule.intervalHours,
@@ -565,9 +574,12 @@ router.get("/api/stats-sync", async () => {
  * Sync Last.fm recent scrobbles into stats PlayRecords via host-forward import.
  * Shares exclusive lock with Loved playlist sync (busy → 409).
  * Does not scrobble and does not write on local finish.
+ * Body optional: { mode: "full" } →「尽量同步」(hardCap 5000, ignore watermark once).
  */
-router.post("/api/stats-sync", async () => {
-  const result = await runStatsSync("manual");
+router.post("/api/stats-sync", async (req) => {
+  const body = readJson(req);
+  const mode = body.mode === "full" ? "full" : "incremental";
+  const result = await runStatsSync("manual", { mode });
   if (result.skipped) {
     return jsonResponse(
       { ok: false, skipped: true, error: "skipped_busy", reason: "skipped_busy" },

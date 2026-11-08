@@ -319,7 +319,7 @@ async function refresh(opts) {
 
   const loveDisabled = connectionState((st && st.status) || {}) !== "connected";
   // P3: playlist name can be saved while disconnected; sync/love still need session.
-  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved", "btnSyncStats"].forEach((id) => {
+  ["btnLove", "btnUnlove", "btnLoveProbe", "btnUnloveProbe", "btnLoveTest", "btnUnloveTest", "btnSyncLoved", "btnSyncStats", "btnSyncStatsFull"].forEach((id) => {
     const b = $(id);
     if (b) b.disabled = loveDisabled;
   });
@@ -684,6 +684,8 @@ $("btnSaveStatsSchedule") && ($("btnSaveStatsSchedule").onclick = async () => {
 $("btnSyncStats") && ($("btnSyncStats").onclick = async () => {
   const btn = $("btnSyncStats");
   if (btn) btn.disabled = true;
+  const fullBtn = $("btnSyncStatsFull");
+  if (fullBtn) fullBtn.disabled = true;
   try {
     // persist hard cap before sync
     const raw = $("statsSyncHardCap") ? $("statsSyncHardCap").value : "500";
@@ -699,5 +701,33 @@ $("btnSyncStats") && ($("btnSyncStats").onclick = async () => {
     try { await loadStatsSync(); } catch (_) {}
   } finally {
     if (btn) btn.disabled = false;
+    if (fullBtn) fullBtn.disabled = false;
+  }
+});
+
+$("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
+  const ok = window.confirm(
+    "尽量同步：单次最多拉取约 5000 条 recent scrobble，并忽略水位一次以便回填。\n" +
+      "只写入曲库已有歌曲；未匹配会跳过。已导入的靠近窗/精确去重。\n" +
+      "可能较慢，确定继续？"
+  );
+  if (!ok) return;
+  const btn = $("btnSyncStatsFull");
+  const incrBtn = $("btnSyncStats");
+  if (btn) btn.disabled = true;
+  if (incrBtn) incrBtn.disabled = true;
+  try {
+    setFlash("正在尽量同步 Last.fm → 播放统计（硬顶 5000）…", "muted");
+    const res = await apiPost("/api/stats-sync", { mode: "full" });
+    await refresh({
+      flash: "尽量同步完成：" + (res.summary || ""),
+      flashCls: "ok",
+    });
+  } catch (e) {
+    setFlash("尽量同步失败: " + friendlyLogMessage(e.message), "err");
+    try { await loadStatsSync(); } catch (_) {}
+  } finally {
+    if (btn) btn.disabled = false;
+    if (incrBtn) incrBtn.disabled = false;
   }
 });
