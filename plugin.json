@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/songloft-org/plugin-toolchain/main/schemas/plugin.schema.json",
   "name": "Last.fm",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "听歌时自动把播放记录同步到 Last.fm",
   "author": "viazure",
   "homepage": "https://github.com/viazure/songloft-plugin-lastfm",
@@ -17,8 +17,8 @@
     "net"
   ],
   "updateUrl": "https://raw.githubusercontent.com/viazure/songloft-plugin-lastfm/main/plugin.json",
-  "download_url": "https://github.com/viazure/songloft-plugin-lastfm/releases/download/v0.1.27/lastfm.jsplugin.zip",
-  "entryHash": "cbdf8c109367c23899aa5403f2607e0afeebf41886f67d2cd93d2d9a10ab3b85",
-  "zipHash": "b889af791571e46cc9760e860d6394420d5386a9330a017978167134051e28d2",
+  "download_url": "https://github.com/viazure/songloft-plugin-lastfm/releases/download/v0.1.28/lastfm.jsplugin.zip",
+  "entryHash": "1c9091321e35ce723fd1439c68ad84343070eaef3b0fbad75ca6a5181a98f5db",
+  "zipHash": "04c1eda709938c968e5fe98ac914a7213599a57be30a563b3bf713c64f559a87",
   "icon": "icon.b79ed352.png"
 }
