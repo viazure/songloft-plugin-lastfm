@@ -30,7 +30,7 @@ import {
   STATS_SYNC_FULL_HARD_CAP,
   STATS_SYNC_MAX_HARD_CAP,
 } from "./stats-sync";
-import { runStatsSync, enqueueFullStatsSync, isStatsSyncBusy } from "./stats-sync-run";
+import { runStatsSync, enqueueFullStatsSync, isStatsSyncBusy, isFullStatsSyncQueued } from "./stats-sync-run";
 import { statsScheduler } from "./stats-schedule";
 
 const router = createRouter();
@@ -599,6 +599,13 @@ router.post("/api/stats-sync", async (req) => {
       summary: formatStatsSyncSummary(last as any),
       message: "尽量同步已开始（后台进行，请稍后刷新状态）",
     });
+  }
+  // Queued full backfill may not hold the lock yet — block incremental early (409).
+  if (isStatsSyncBusy() || isFullStatsSyncQueued()) {
+    return jsonResponse(
+      { ok: false, skipped: true, error: "skipped_busy", reason: "skipped_busy" },
+      409
+    );
   }
   const result = await runStatsSync("manual", { mode });
   if (result.skipped) {

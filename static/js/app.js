@@ -723,27 +723,58 @@ $("btnSyncStatsFull") && ($("btnSyncStatsFull").onclick = async () => {
       setFlash("尽量同步已开始，后台进行中…", "muted");
       const prevTs = res.last && res.last.ts;
       let finalSummary = res.summary || "";
-      for (let i = 0; i < 120; i++) {
+      // ok | fail | skipped | timeout — never fake "完成" on skip/fail
+      let outcome = "timeout";
+      // ~360s: hardCap 5000 may exceed old 240s poll window
+      for (let i = 0; i < 180; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const st = await apiGet("/api/stats-sync");
-        if (st && st.last && st.last.ts && st.last.ts !== prevTs && !st.running) {
-          finalSummary = st.summary || "";
-          break;
+        if (!st) {
+          setFlash("尽量同步进行中… (" + ((i + 1) * 2) + "s)", "muted");
+          continue;
         }
-        if (st && !st.running && st.last && prevTs && st.last.ts === prevTs && i > 2) {
-          // finished without state change? unlikely; keep waiting a bit then stop
-          if (i > 5) break;
+        const running = !!st.running;
+        const ts = st.last && st.last.ts;
+        const tsChanged = !!(ts && ts !== prevTs);
+        if (!running) {
+          finalSummary = st.summary || finalSummary;
+          if (tsChanged) {
+            outcome = st.last && st.last.ok === false ? "fail" : "ok";
+            break;
+          }
+          // Accept then skip_busy: ts unchanged once queue clears. Allow a few ticks for setTimeout(0).
+          if (i > 2) {
+            outcome = "skipped";
+            break;
+          }
         }
         setFlash("尽量同步进行中… (" + ((i + 1) * 2) + "s)", "muted");
       }
-      await refresh({
-        flash: "尽量同步完成：" + finalSummary,
-        flashCls: "ok",
-      });
+      if (outcome === "ok") {
+        await refresh({
+          flash: "尽量同步完成：" + finalSummary,
+          flashCls: "ok",
+        });
+      } else if (outcome === "fail") {
+        await refresh({
+          flash: "尽量同步失败：" + finalSummary,
+          flashCls: "err",
+        });
+      } else if (outcome === "skipped") {
+        await refresh({
+          flash: "尽量同步未执行（忙或已跳过）：" + finalSummary,
+          flashCls: "err",
+        });
+      } else {
+        await refresh({
+          flash: "尽量同步仍在进行或超时，请稍后刷新状态：" + finalSummary,
+          flashCls: "muted",
+        });
+      }
     } else {
       await refresh({
-        flash: "尽量同步完成：" + (res.summary || ""),
-        flashCls: "ok",
+        flash: "尽量同步未开始（忙）：" + (res.summary || res.reason || ""),
+        flashCls: "err",
       });
     }
   } catch (e) {

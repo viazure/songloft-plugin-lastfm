@@ -244,6 +244,11 @@ export function isStatsSyncBusy(): boolean {
   return fullStatsSyncQueued || lovedScheduler.isBusy();
 }
 
+/** Test-only: toggle queue flag without scheduling work (race / gate unit tests). */
+export function __setFullStatsSyncQueuedForTests(v: boolean): void {
+  fullStatsSyncQueued = !!v;
+}
+
 /**
  * Accept「尽量同步」immediately and run under exclusive lock on a macrotask
  * so the HTTP handler can return before host scheduler timeout.

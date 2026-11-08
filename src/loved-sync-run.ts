@@ -8,6 +8,7 @@ import {
   type LovedPlaylistSyncResult,
 } from "./loved-playlist";
 import { lovedScheduler } from "./loved-schedule";
+import { isFullStatsSyncQueued } from "./stats-sync-run";
 import {
   appendLog,
   appendScrobbleRecord,
@@ -180,6 +181,11 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
  * Manual and scheduled both go through here so they cannot double-write.
  */
 export async function runLovedPlaylistSync(source: LovedSyncSource): Promise<LovedSyncRunResult> {
+  // Full stats sync accepted but not yet holding exclusive lock — do not steal it.
+  if (isFullStatsSyncQueued()) {
+    await appendLog("info", `loved playlist sync skipped_busy (full stats queued) (${source})`);
+    return { ok: false, skipped: true, reason: "skipped_busy", source };
+  }
   const gate = await lovedScheduler.runExclusive(() => executeLovedPlaylistSync(source));
   if (gate.skipped) {
     await appendLog("info", `loved playlist sync ${gate.reason} (${source})`);
