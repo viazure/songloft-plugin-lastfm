@@ -2,45 +2,46 @@
 
 听歌时自动把播放记录同步到 [Last.fm](https://www.last.fm/)。
 
-- `play` → `track.updateNowPlaying`
-- `finish` / 合格的 `skip` → `track.scrobble`
-- 默认规则（可配置）：曲长 > 30s；播放满一半时长或满 4 分钟（以先到为准）
-- 可选只同步 `source=miot`（智能音箱投播）
-- 半数到达后会立即 scrobble：普通播放有用；音箱侧通常仍播完才记
+## 功能
 
-社区插件，**未经 Songloft 官方审核**。安装前请自行确认。
+- 自动记录正在播放，以及已经听完或中途切走、且达到记录门槛的歌曲
+- 记录门槛可以自己改。默认是歌曲长于 30 秒，并且播放过半或已满 4 分钟
+- 可以按内容（本地音乐、网络音乐）和播放方式（小爱音箱、Songloft 客户端）选择要记录的范围，两边都勾上才会同步。默认全部勾选。网络音乐指由插件引入的三方音乐源等网上来源
+- 可以把 Last.fm 的红心同步到 Songloft 的「收藏」，也可以同步到自定义歌单。支持手动同步，也可以打开定时，定时默认关闭
+- 可以把 Last.fm 的最近听歌写入官方「播放统计」插件
+- 使用自己的 Last.fm API Key，在设置页授权后连接账号
 
-## 保活说明（重要）
+同步红心时，只会写入本地曲库里已经有的歌，没有的不会下载。目的地里有、但 Last.fm 红心里没有的会被去掉。不会从 Songloft 反向同步回 Last.fm。
 
-Songloft 会在空闲约 10 分钟后卸载 jsplugin，并清除 onPlayEvent 订阅；**播放事件不会自动唤醒**已卸载的插件（与歌词插件不同），因此可能漏 scrobble。
+## 保活说明
 
-本插件在 onInit 会尽量把自身写入宿主 `/api/v1/settings/plugin-keep-alive` 白名单（与 `miot` 同类）。若自注册失败，请在 Songloft 设置里把 `lastfm` 加入该白名单。真正的「仅播放时保活、空闲可卸 + 事件唤醒」需要宿主改动，本仓不改 Songloft 本体。
-
+Songloft 在空闲大约 10 分钟后会卸载插件，播放时也不会自动唤醒，因此可能漏记。本插件启动时会尽量把自己加入宿主的保活白名单。如果没有加上，请在 Songloft 设置里把 `lastfm` 加入 `plugin-keep-alive`。
 
 ## 安装
 
 ### 从 Songloft「GitHub 发现」
 
 1. 打开 Songloft → **插件** → 选源 / GitHub 发现
-2. 搜索 **Last.fm**（仓库需带 topic `songloft-plugin`）
+2. 搜索 **Last.fm**
 3. 安装并启用
 
 ### 手动上传
 
 1. 从 [Releases](https://github.com/viazure/songloft-plugin-lastfm/releases) 下载 `lastfm.jsplugin.zip`
-2. Songloft → **插件** → 上传该 ZIP → **启用**「Last.fm」
+2. 打开 Songloft → **插件** → 上传该 ZIP → **启用**「Last.fm」
 
-## 配置（用户自备 Last.fm API）
+## 配置
 
-密钥只存在 Songloft 本机插件 `storage`，**不会**写入本仓库或日志明文回显。
+密钥只存在本机的插件存储里，不会写入仓库，也不会在日志里明文出现。
 
-1. 打开 https://www.last.fm/api/account/create 创建应用，拿到 **API Key** 与 **Shared Secret**
-2. 插件设置页「应用凭证（高级）」填入 Key / Secret（已保存的留空表示不改）→ **保存应用凭证**
-3. 点 **连接账号**（网页授权）：本机浏览器打开 Last.fm 授权页并允许 → 回到设置页完成连接
-4. 备选：用户名 + 密码授权，或粘贴已有 Session Key
-5. 可选：勾选「只同步 source=miot」；按需调整最短曲长 / 比例 / 上限
+1. 打开 https://www.last.fm/api/account/create 创建应用，拿到 API Key 和 Shared Secret
+2. 在插件设置页的「应用凭证（高级）」中填入并保存
+3. 点击「连接账号」，在浏览器中允许授权
+4. 也可以使用用户名和密码授权，或粘贴已有的 Session Key
+5. 按需勾选要记录的内容和播放方式，并调整记录门槛
+6. 按需将 Last.fm 红心同步到「收藏」或自定义歌单，或同步到「播放统计」
 
-设置页「手动探测」可测 Now Playing / Scrobble（未连接时会失败）。
+设置页可以查看最近的成功或失败记录。需要做手动测试时，可打开「诊断」。
 
 ## 开发
 
@@ -51,20 +52,18 @@ npm run build
 # 产物：dist/lastfm.jsplugin.zip
 ```
 
-需要 Songloft ≥ `2.8.0`，以及 `@songloft/plugin-builder` / `@songloft/plugin-sdk`。
+需要 Songloft 2.8.0 或更高版本，以及 `@songloft/plugin-builder` 和 `@songloft/plugin-sdk`。
 
 ## 发现与更新
 
 - 公开仓：https://github.com/viazure/songloft-plugin-lastfm
-- GitHub topic：`songloft-plugin`
-- `updateUrl`：根目录 `plugin.json`（raw）
-- `download_url`：对应 Release 资产 `lastfm.jsplugin.zip`
+- `updateUrl`：根目录 `plugin.json`
+- `download_url`：对应 Release 中的 `lastfm.jsplugin.zip`
 
 ## 图标说明
 
-插件图标取自 Last.fm 站点常见 favicon / apple-touch 风格素材。Last.fm 为第三方商标；本插件与 Last.fm / Audioscrobbler 无官方隶属关系。
+插件图标取自 Last.fm 站点常见的 favicon 风格素材。Last.fm 是第三方商标，本插件与 Last.fm 没有官方隶属关系。
 
 ## License
 
 [Apache-2.0](./LICENSE)
-

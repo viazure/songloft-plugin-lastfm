@@ -13,10 +13,32 @@ function stripSecrets(raw) {
   return s;
 }
 
+let toastTimer = null;
+
 function setFlash(text, cls) {
   const el = $("flash");
-  el.className = cls || "muted";
-  el.textContent = text ? stripSecrets(String(text)) : "";
+  if (!el) return;
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+  const msg = text ? stripSecrets(String(text)) : "";
+  if (!msg) {
+    el.classList.remove("show");
+    el.textContent = "";
+    el.className = "toast";
+    return;
+  }
+  el.className = "toast show" + (cls && cls !== "muted" ? " " + cls : "");
+  el.textContent = msg;
+  // In-progress notices stay until the next result; others auto-dismiss.
+  const sticky = /正在|进行中|等待网页允许/.test(msg);
+  if (sticky) return;
+  const ms = cls === "err" ? 4500 : cls === "warn" ? 4000 : 3200;
+  toastTimer = setTimeout(() => {
+    el.classList.remove("show");
+    toastTimer = null;
+  }, ms);
 }
 
 
@@ -30,7 +52,7 @@ const PATH_LABEL = {
   test: "手动测试",
   love: "红心",
   unlove: "取消红心",
-  loved_playlist_sync: "Loved歌单",
+  loved_playlist_sync: "红心同步",
   stats_sync: "播放统计同步",
 };
 
@@ -115,7 +137,45 @@ function formatLovedNextDue(schedule) {
   }
 }
 
+function lovedSyncTargetValue() {
+  const pl = $("lovedSyncTargetPlaylist");
+  return pl && pl.checked ? "playlist" : "favorites";
+}
+
+function updateLovedTargetVisibility() {
+  const wrap = $("lovedPlaylistNameWrap");
+  if (wrap) wrap.classList.toggle("hidden", lovedSyncTargetValue() !== "playlist");
+}
+
+function applyLovedTargetFields(settings) {
+  const src = settings || {};
+  const target = src.lovedSyncTarget === "playlist" ? "playlist" : "favorites";
+  if ($("lovedSyncTargetFavorites")) $("lovedSyncTargetFavorites").checked = target === "favorites";
+  if ($("lovedSyncTargetPlaylist")) $("lovedSyncTargetPlaylist").checked = target === "playlist";
+  if ($("lovedPlaylistName")) {
+    $("lovedPlaylistName").value = src.lovedPlaylistName || "Last.fm Loved";
+  }
+  updateLovedTargetVisibility();
+}
+
+function currentLovedDestLabel() {
+  if (lovedSyncTargetValue() === "playlist") {
+    const raw = $("lovedPlaylistName") ? $("lovedPlaylistName").value.trim() : "";
+    return "「" + (raw || "Last.fm Loved") + "」";
+  }
+  return "「收藏」";
+}
+
+async function saveLovedTarget() {
+  const raw = $("lovedPlaylistName") ? $("lovedPlaylistName").value : "";
+  await apiPost("/api/settings", {
+    lovedSyncTarget: lovedSyncTargetValue(),
+    lovedPlaylistName: raw,
+  });
+}
+
 function applyLovedScheduleFields(settingsOrSchedule) {
+
   const enabledEl = $("lovedScheduleEnabled");
   const intervalEl = $("lovedScheduleIntervalHours");
   if (!enabledEl && !intervalEl) return;
@@ -273,6 +333,20 @@ function hideWaiting() {
   $("authHint").textContent = "";
 }
 
+function updateScrobbleFilterEmptyHint() {
+  const hint = $("scrobbleFilterEmptyHint");
+  if (!hint) return;
+  const contentEmpty = !$("scrobbleLocal").checked && !$("scrobbleNetwork").checked;
+  const playbackEmpty = !$("scrobbleSourceMiot").checked && !$("scrobbleSourceSongloft").checked;
+  hint.classList.toggle("hidden", !(contentEmpty || playbackEmpty));
+}
+
+function applyScrobbleFilterDisabled(disabled) {
+  ["scrobbleLocal", "scrobbleNetwork", "scrobbleSourceMiot", "scrobbleSourceSongloft"].forEach((id) => {
+    if ($(id)) $(id).disabled = disabled;
+  });
+}
+
 function applyConnectionUI(st, settings) {
   const s = (st && st.status) || {};
   const state = connectionState(s);
@@ -314,7 +388,9 @@ function applyConnectionUI(st, settings) {
   const connected = state === "connected";
   $("enabled").disabled = !connected;
   $("enabledHint").textContent = connected ? "" : "（先连接账号）";
-  $("onlyMiot").disabled = !connected;
+  applyScrobbleFilterDisabled(!connected);
+  if ($("filterLoginHint")) $("filterLoginHint").classList.toggle("hidden", connected);
+  if ($("section-scrobble-filter")) $("section-scrobble-filter").removeAttribute("aria-busy");
   $("minDurationSec").disabled = !connected;
   $("delayPercent").disabled = !connected;
   $("delayMaxSec").disabled = !connected;
@@ -332,14 +408,19 @@ async function refresh(opts) {
   $("apiKey").placeholder = settings.apiKeySet ? "已保存（留空不改）" : "填入 Last.fm API Key";
   if ($("apiSecret")) $("apiSecret").placeholder = settings.apiSecretSet ? "已保存（留空不改）" : "填入 Shared Secret";
   if ($("username")) $("username").value = settings.username || "";
-  $("onlyMiot").checked = !!settings.onlyMiot;
+  if ($("scrobbleLocal")) $("scrobbleLocal").checked = settings.scrobbleLocal !== false;
+  if ($("scrobbleNetwork")) $("scrobbleNetwork").checked = settings.scrobbleNetwork === true;
+  const sources = Array.isArray(settings.scrobbleSources)
+    ? settings.scrobbleSources
+    : ["miot", "songloft-player"];
+  if ($("scrobbleSourceMiot")) $("scrobbleSourceMiot").checked = sources.includes("miot");
+  if ($("scrobbleSourceSongloft")) $("scrobbleSourceSongloft").checked = sources.includes("songloft-player");
+  updateScrobbleFilterEmptyHint();
   $("enabled").checked = settings.enabled !== false;
   $("minDurationSec").value = settings.minDurationSec ?? 30;
   $("delayPercent").value = settings.delayPercent ?? 50;
   $("delayMaxSec").value = settings.delayMaxSec ?? 240;
-  if ($("lovedPlaylistName")) {
-    $("lovedPlaylistName").value = settings.lovedPlaylistName || "Last.fm Loved";
-  }
+  applyLovedTargetFields(settings);
   applyLovedScheduleFields(settings);
 
   applyConnectionUI(st, settings);
@@ -354,6 +435,10 @@ async function refresh(opts) {
   });
   if ($("lovedPlaylistName")) $("lovedPlaylistName").disabled = false;
   if ($("btnSaveLovedName")) $("btnSaveLovedName").disabled = false;
+  if ($("btnSaveLovedTarget")) $("btnSaveLovedTarget").disabled = false;
+  ["lovedSyncTargetFavorites", "lovedSyncTargetPlaylist"].forEach((id) => {
+    if ($(id)) $(id).disabled = false;
+  });
   // Schedule toggle/interval: not gated by connection / onlyMiot.
   if ($("lovedScheduleEnabled")) $("lovedScheduleEnabled").disabled = false;
   if ($("lovedScheduleIntervalHours")) $("lovedScheduleIntervalHours").disabled = false;
@@ -362,7 +447,6 @@ async function refresh(opts) {
   applyStatsControls();
 
   if (options.flash) setFlash(options.flash, options.flashCls || "muted");
-  else if (!options.keepFlash) setFlash("");
 
   const log = await apiGet("/api/log");
   $("logBox").textContent = (log.log || []).map((e) => {
@@ -400,7 +484,12 @@ async function saveAuth() {
 
 async function saveScrobble() {
   const body = {
-    onlyMiot: $("onlyMiot").checked,
+    scrobbleLocal: $("scrobbleLocal").checked,
+    scrobbleNetwork: $("scrobbleNetwork").checked,
+    scrobbleSources: [
+      $("scrobbleSourceMiot").checked ? "miot" : null,
+      $("scrobbleSourceSongloft").checked ? "songloft-player" : null,
+    ].filter(Boolean),
     enabled: $("enabled").checked,
     minDurationSec: Number($("minDurationSec").value),
     delayPercent: Number($("delayPercent").value),
@@ -504,6 +593,11 @@ $("btnSaveAuth").onclick = async () => {
   }
 };
 
+["scrobbleLocal", "scrobbleNetwork", "scrobbleSourceMiot", "scrobbleSourceSongloft"].forEach((id) => {
+  const el = $(id);
+  if (el) el.addEventListener("change", updateScrobbleFilterEmptyHint);
+});
+
 $("btnSave").onclick = async () => {
   try {
     await saveScrobble();
@@ -601,27 +695,44 @@ $("btnUnloveProbe").onclick = () => loveProbe("unlove");
 
 
 async function saveLovedPlaylistName() {
-  const raw = $("lovedPlaylistName") ? $("lovedPlaylistName").value : "";
-  await apiPost("/api/settings", { lovedPlaylistName: raw });
+  await saveLovedTarget();
 }
 
-$("btnSaveLovedName").onclick = async () => {
+if ($("btnSaveLovedName")) $("btnSaveLovedName").onclick = async () => {
   try {
-    await saveLovedPlaylistName();
-    await refresh({ flash: "Loved 歌单名已保存", flashCls: "ok" });
+    await saveLovedTarget();
+    await refresh({ flash: "同步目标已保存", flashCls: "ok" });
   } catch (e) {
-    setFlash("保存歌单名失败: " + friendlyLogMessage(e.message), "err");
+    setFlash("保存同步目标失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
   }
 };
+
+if ($("btnSaveLovedTarget")) $("btnSaveLovedTarget").onclick = async () => {
+  try {
+    await saveLovedTarget();
+    await refresh({ flash: "同步目标已保存", flashCls: "ok" });
+  } catch (e) {
+    setFlash("保存同步目标失败: " + friendlyLogMessage(e.message), "err");
+    await refresh({ keepFlash: true }).catch(() => {});
+  }
+};
+
+["lovedSyncTargetFavorites", "lovedSyncTargetPlaylist"].forEach((id) => {
+  const el = $(id);
+  if (el) el.addEventListener("change", updateLovedTargetVisibility);
+});
 
 async function saveLovedSchedule() {
   const enabled = $("lovedScheduleEnabled") ? $("lovedScheduleEnabled").checked : false;
   const hoursRaw = $("lovedScheduleIntervalHours") ? $("lovedScheduleIntervalHours").value : "24";
   const hours = Number(hoursRaw);
+  const raw = $("lovedPlaylistName") ? $("lovedPlaylistName").value : "";
   await apiPost("/api/settings", {
     lovedScheduleEnabled: !!enabled,
     lovedScheduleIntervalHours: hours === 6 || hours === 12 || hours === 24 ? hours : 24,
+    lovedSyncTarget: lovedSyncTargetValue(),
+    lovedPlaylistName: raw,
   });
 }
 
@@ -639,17 +750,16 @@ $("btnSyncLoved").onclick = async () => {
   const btn = $("btnSyncLoved");
   btn.disabled = true;
   try {
-    // Persist name first so sync uses the value currently in the input.
-    await saveLovedPlaylistName();
-    setFlash("正在同步 Loved 到歌单…", "muted");
+    await saveLovedTarget();
+    setFlash("正在同步 Last.fm 红心到" + currentLovedDestLabel() + "…", "muted");
     const res = await apiPost("/api/loved-playlist/sync", {});
     if (!res.ok) throw new Error(res.error || "同步失败");
     await refresh({
-      flash: "Loved 歌单已更新：" + (res.summary || ""),
+      flash: "红心已同步到" + currentLovedDestLabel() + "：" + (res.summary || ""),
       flashCls: "ok",
     });
   } catch (e) {
-    setFlash("Loved 同步失败: " + friendlyLogMessage(e.message), "err");
+    setFlash("红心同步失败: " + friendlyLogMessage(e.message), "err");
     await refresh({ keepFlash: true }).catch(() => {});
   }
   // disabled state comes from refresh() / connectionState — do not force-enable

@@ -1,22 +1,80 @@
 import { describe, expect, it, vi } from "vitest";
-import { upsertLovedPlaylist, syncLovedToPlaylist, LOVED_PLAYLIST_NAME, resolveLovedPlaylistName } from "../src/loved-playlist";
+import {
+  writeFavoritesPlaylist,
+  upsertLovedPlaylist,
+  syncLovedToPlaylist,
+  findBuiltInFavorites,
+  isBuiltInFavorites,
+  isBuiltInRadioFavorites,
+  mayDeleteAndRecreatePlaylist,
+  LOVED_PLAYLIST_NAME,
+  FAVORITES_PLAYLIST_NAME,
+  resolveLovedPlaylistName,
+  getReplaceSongs,
+} from "../src/loved-playlist";
 import type { PlaylistsApi } from "../src/loved-playlist";
 
-function mockApi(initial: Array<{ id: number; name: string; songs: number[] }>): PlaylistsApi & {
-  state: typeof initial;
+type PlaylistRow = {
+  id: number;
+  name: string;
+  songs: number[];
+  type?: "normal" | "radio";
+  labels?: string[];
+};
+
+function mockSong(id: number): Song {
+  return {
+    id,
+    type: "local" as const,
+    title: "",
+    artist: "",
+    album: "",
+    year: 0,
+    genre: "",
+    duration: 0,
+    file_path: "",
+    url: "",
+    cover_url: "",
+    file_size: 0,
+    format: "",
+    bit_rate: 0,
+    sample_rate: 0,
+    is_live: false,
+    is_video: false,
+    added_at: "",
+    updated_at: "",
+  };
+}
+
+function mockApi(initial: PlaylistRow[]): PlaylistsApi & {
+  state: PlaylistRow[];
+  calls: { create: number; delete: number[]; replaceSongs: number[][]; removeSongs: number[][]; addSongs: number[][] };
 } {
-  const state = initial.map((p) => ({ ...p, songs: [...p.songs] }));
+  const state = initial.map((p) => ({
+    ...p,
+    songs: [...p.songs],
+    type: p.type ?? ("normal" as const),
+    labels: [...(p.labels ?? [])],
+  }));
   let nextId = 100;
-  const api: PlaylistsApi & { state: typeof state } = {
+  const calls = {
+    create: 0,
+    delete: [] as number[],
+    replaceSongs: [] as number[][],
+    removeSongs: [] as number[][],
+    addSongs: [] as number[][],
+  };
+  const api: PlaylistsApi & { state: typeof state; calls: typeof calls } = {
     state,
+    calls,
     async list() {
       return state.map((p) => ({
         id: p.id,
-        type: "normal" as const,
+        type: p.type ?? "normal",
         name: p.name,
         description: "",
         cover_url: "",
-        labels: [],
+        labels: [...(p.labels ?? [])],
         song_count: p.songs.length,
         created_at: "",
         updated_at: "",
@@ -25,11 +83,12 @@ function mockApi(initial: Array<{ id: number; name: string; songs: number[] }>):
       }));
     },
     async create(input) {
+      calls.create += 1;
       const id = nextId++;
-      state.push({ id, name: input.name, songs: [] });
+      state.push({ id, name: input.name, songs: [], type: input.type ?? "normal", labels: [] });
       return {
         id,
-        type: "normal",
+        type: input.type ?? "normal",
         name: input.name,
         description: input.description || "",
         cover_url: "",
@@ -43,29 +102,10 @@ function mockApi(initial: Array<{ id: number; name: string; songs: number[] }>):
     },
     async getSongs(playlistId) {
       const p = state.find((x) => x.id === playlistId);
-      return (p?.songs || []).map((id) => ({
-        id,
-        type: "local" as const,
-        title: "",
-        artist: "",
-        album: "",
-        year: 0,
-        genre: "",
-        duration: 0,
-        file_path: "",
-        url: "",
-        cover_url: "",
-        file_size: 0,
-        format: "",
-        bit_rate: 0,
-        sample_rate: 0,
-        is_live: false,
-        is_video: false,
-        added_at: "",
-        updated_at: "",
-      }));
+      return (p?.songs || []).map(mockSong);
     },
     async addSongs(playlistId, songIds) {
+      calls.addSongs.push([playlistId, ...songIds]);
       const p = state.find((x) => x.id === playlistId);
       if (!p) throw new Error("missing");
       let added = 0;
@@ -78,12 +118,14 @@ function mockApi(initial: Array<{ id: number; name: string; songs: number[] }>):
       return { added, skipped: songIds.length - added };
     },
     async removeSongs(playlistId, songIds) {
+      calls.removeSongs.push([playlistId, ...songIds]);
       const p = state.find((x) => x.id === playlistId);
       if (!p) throw new Error("missing");
       const drop = new Set(songIds);
       p.songs = p.songs.filter((id) => !drop.has(id));
     },
     async delete(id) {
+      calls.delete.push(id);
       const i = state.findIndex((x) => x.id === id);
       if (i >= 0) state.splice(i, 1);
     },
@@ -91,30 +133,116 @@ function mockApi(initial: Array<{ id: number; name: string; songs: number[] }>):
   return api;
 }
 
-describe("upsertLovedPlaylist", () => {
-  it("creates playlist when missing (including empty song list)", async () => {
-    const api = mockApi([]);
-    const r = await upsertLovedPlaylist(api, []);
-    expect(r.created).toBe(true);
-    expect(r.playlistIdChanged).toBe(false);
-    expect(api.state).toHaveLength(1);
-    expect(api.state[0].name).toBe(LOVED_PLAYLIST_NAME);
-    expect(api.state[0].songs).toEqual([]);
+function favoritesFixtures(): PlaylistRow[] {
+  return [
+    { id: 1, name: FAVORITES_PLAYLIST_NAME, songs: [1, 2, 3], type: "normal", labels: ["built_in"] },
+    { id: 2, name: "电台收藏", songs: [80, 81], type: "radio", labels: ["built_in"] },
+    { id: 9, name: FAVORITES_PLAYLIST_NAME, songs: [70], type: "normal", labels: [] },
+    { id: 10, name: "我喜欢的音乐", songs: [60], type: "normal", labels: [] },
+    { id: 11, name: LOVED_PLAYLIST_NAME, songs: [50], type: "normal", labels: [] },
+  ];
+}
+
+describe("isBuiltInFavorites", () => {
+  it("matches built_in + type normal only, not by name and not radio", () => {
+    expect(isBuiltInFavorites({ type: "normal", labels: ["built_in"] })).toBe(true);
+    expect(isBuiltInFavorites({ type: "normal", labels: ["built_in", "other"] })).toBe(true);
+    expect(isBuiltInFavorites({ type: "radio", labels: ["built_in"] })).toBe(false);
+    expect(isBuiltInFavorites({ type: "normal", labels: [] })).toBe(false);
+    expect(isBuiltInFavorites({ type: "normal", labels: ["auto_created"] })).toBe(false);
+    expect(isBuiltInFavorites({ type: "normal" })).toBe(false);
+    expect(isBuiltInFavorites(null)).toBe(false);
+    expect(isBuiltInRadioFavorites({ type: "radio", labels: ["built_in"] })).toBe(true);
+    expect(isBuiltInRadioFavorites({ type: "normal", labels: ["built_in"] })).toBe(false);
+  });
+});
+
+describe("findBuiltInFavorites", () => {
+  it("finds built_in normal playlist, not radio, not same-named ordinary playlist", async () => {
+    const api = mockApi(favoritesFixtures());
+    const hit = await findBuiltInFavorites(api);
+    expect(hit?.id).toBe(1);
+    expect(hit?.name).toBe(FAVORITES_PLAYLIST_NAME);
+    expect(hit?.type).toBe("normal");
   });
 
-  it("cover-refreshes existing: removes old, adds new, keeps id", async () => {
-    const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [1, 2, 3] }]);
-    const r = await upsertLovedPlaylist(api, [3, 9]);
-    expect(r.playlistId).toBe(7);
-    expect(r.created).toBe(false);
-    expect(r.playlistIdChanged).toBe(false);
-    expect(api.state[0].songs).toEqual([3, 9]);
+  it("does not use lovedPlaylistName or the display name as the lookup key", async () => {
+    const api = mockApi([
+      { id: 2, name: "电台收藏", songs: [8], type: "radio", labels: ["built_in"] },
+      { id: 4, name: "Favorites", songs: [1], type: "normal", labels: ["built_in"] },
+      { id: 5, name: FAVORITES_PLAYLIST_NAME, songs: [9], type: "normal", labels: [] },
+      { id: 6, name: "我喜欢的音乐", songs: [3], type: "normal", labels: [] },
+    ]);
+    const hit = await findBuiltInFavorites(api);
+    expect(hit?.id).toBe(4);
+    expect(hit?.name).toBe("Favorites");
   });
 
-  it("unlove effect: previously present ids disappear on refresh", async () => {
-    const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [1, 2] }]);
-    await upsertLovedPlaylist(api, [2]);
-    expect(api.state[0].songs).toEqual([2]);
+  it("returns null when only radio built-in exists", async () => {
+    const api = mockApi([
+      { id: 2, name: "电台收藏", songs: [8], type: "radio", labels: ["built_in"] },
+      { id: 5, name: FAVORITES_PLAYLIST_NAME, songs: [9], type: "normal", labels: [] },
+    ]);
+    expect(await findBuiltInFavorites(api)).toBeNull();
+  });
+});
+
+describe("writeFavoritesPlaylist", () => {
+  it("uses replaceSongs when available and successful; never delete/create", async () => {
+    const api = mockApi(favoritesFixtures());
+    api.replaceSongs = async (playlistId, songIds) => {
+      api.calls.replaceSongs.push([playlistId, ...songIds]);
+      const p = api.state.find((x) => x.id === playlistId);
+      if (!p) throw new Error("missing");
+      p.songs = [...songIds];
+    };
+    const r = await writeFavoritesPlaylist(api, [3, 9], 1);
+    expect(r.writeMethod).toBe("replaceSongs");
+    expect(r.playlistId).toBe(1);
+    expect(api.calls.replaceSongs).toEqual([[1, 3, 9]]);
+    expect(api.calls.removeSongs).toEqual([]);
+    expect(api.calls.addSongs).toEqual([]);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([3, 9]);
+    expect(api.state.find((p) => p.id === 2)?.songs).toEqual([80, 81]);
+  });
+
+  it("falls back to clear+add when replaceSongs throws; never delete/create", async () => {
+    const api = mockApi(favoritesFixtures());
+    api.replaceSongs = async () => {
+      throw new Error("cannot replace built-in playlist");
+    };
+    const r = await writeFavoritesPlaylist(api, [3, 9], 1);
+    expect(r.writeMethod).toBe("clearAdd");
+    expect(r.playlistId).toBe(1);
+    expect(api.calls.removeSongs.length).toBeGreaterThan(0);
+    expect(api.calls.addSongs.length).toBeGreaterThan(0);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    expect(typeof api.delete).toBe("function");
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([3, 9]);
+    expect(api.state.find((p) => p.id === 2)?.songs).toEqual([80, 81]);
+  });
+
+  it("falls back to clear+add when replaceSongs is missing; never delete/create", async () => {
+    const api = mockApi(favoritesFixtures());
+    expect(getReplaceSongs(api)).toBeNull();
+    const r = await writeFavoritesPlaylist(api, [9], 1);
+    expect(r.writeMethod).toBe("clearAdd");
+    expect(api.calls.replaceSongs).toEqual([]);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([9]);
+  });
+
+  it("empty matched set clears the favorites playlist", async () => {
+    const api = mockApi(favoritesFixtures());
+    const r = await writeFavoritesPlaylist(api, [], 1);
+    expect(r.writeMethod).toBe("clearAdd");
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([]);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
   });
 });
 
@@ -172,7 +300,143 @@ describe("resolveLovedPlaylistName", () => {
   });
 });
 
-describe("upsertLovedPlaylist custom name", () => {
+describe("syncLovedToPlaylist destination", () => {
+  const scrobbler = {
+    getLovedTracks: async () => ({
+      tracks: [{ artist: "A", title: "T1" }],
+      truncated: false,
+    }),
+  };
+  const songsApi = {
+    list: async () => [{ id: 1, artist: "A", title: "T1" }],
+  };
+
+  it("writes to built-in 收藏 and ignores lovedPlaylistName", async () => {
+    const api = mockApi(favoritesFixtures());
+    const r = await syncLovedToPlaylist({
+      scrobbler: scrobbler as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      playlistName: "我喜欢的音乐",
+      previousPlaylistName: LOVED_PLAYLIST_NAME,
+      now: () => 99,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.playlistId).toBe(1);
+    expect(r.playlistName).toBe(FAVORITES_PLAYLIST_NAME);
+    expect(r.created).toBe(false);
+    expect(r.playlistIdChanged).toBe(false);
+    expect(r.targetChanged).toBe(false);
+    expect(r.writeMethod).toBe("clearAdd");
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([1]);
+    expect(api.state.find((p) => p.id === 10)?.songs).toEqual([60]);
+    expect(api.state.find((p) => p.id === 11)?.songs).toEqual([50]);
+    expect(api.state.find((p) => p.id === 2)?.songs).toEqual([80, 81]);
+    expect(api.state.find((p) => p.id === 9)?.songs).toEqual([70]);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+  });
+
+  it("uses replaceSongs during sync when the host method succeeds", async () => {
+    const api = mockApi(favoritesFixtures());
+    api.replaceSongs = async (playlistId, songIds) => {
+      api.calls.replaceSongs.push([playlistId, ...songIds]);
+      const p = api.state.find((x) => x.id === playlistId);
+      if (!p) throw new Error("missing");
+      p.songs = [...songIds];
+    };
+    const r = await syncLovedToPlaylist({
+      scrobbler: scrobbler as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      now: () => 100,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.writeMethod).toBe("replaceSongs");
+    expect(api.calls.replaceSongs).toEqual([[1, 1]]);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([1]);
+    expect(api.state.find((p) => p.id === 2)?.songs).toEqual([80, 81]);
+  });
+
+  it("fails clearly when built-in 收藏 is missing and does not create a playlist", async () => {
+    const api = mockApi([
+      { id: 2, name: "电台收藏", songs: [80], type: "radio", labels: ["built_in"] },
+      { id: 11, name: LOVED_PLAYLIST_NAME, songs: [50], type: "normal", labels: [] },
+    ]);
+    const r = await syncLovedToPlaylist({
+      scrobbler: scrobbler as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      playlistName: "我喜欢的音乐",
+      now: () => 101,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("收藏");
+    expect(r.loved).toBe(1);
+    expect(r.matched).toBe(1);
+    expect(api.calls.create).toBe(0);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.state.find((p) => p.id === 2)?.songs).toEqual([80]);
+    expect(api.state.find((p) => p.id === 11)?.songs).toEqual([50]);
+  });
+
+  it("does not write into 电台收藏", async () => {
+    const api = mockApi(favoritesFixtures());
+    await syncLovedToPlaylist({
+      scrobbler: scrobbler as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      now: () => 102,
+    });
+    expect(api.state.find((p) => p.id === 2)?.songs).toEqual([80, 81]);
+    expect(api.calls.replaceSongs.every((c) => c[0] !== 2)).toBe(true);
+    expect(api.calls.addSongs.every((c) => c[0] !== 2)).toBe(true);
+    expect(api.calls.removeSongs.every((c) => c[0] !== 2)).toBe(true);
+  });
+});
+
+describe("mayDeleteAndRecreatePlaylist", () => {
+  it("allows only ordinary normal playlists, not built-in or radio", () => {
+    expect(mayDeleteAndRecreatePlaylist({ type: "normal", labels: [] })).toBe(true);
+    expect(mayDeleteAndRecreatePlaylist({ type: "normal" })).toBe(true);
+    expect(mayDeleteAndRecreatePlaylist({ type: "normal", labels: ["built_in"] })).toBe(false);
+    expect(mayDeleteAndRecreatePlaylist({ type: "radio", labels: ["built_in"] })).toBe(false);
+    expect(mayDeleteAndRecreatePlaylist({ type: "radio", labels: [] })).toBe(false);
+    expect(mayDeleteAndRecreatePlaylist(null)).toBe(false);
+  });
+});
+
+describe("upsertLovedPlaylist", () => {
+  it("creates playlist when missing (including empty song list)", async () => {
+    const api = mockApi([]);
+    const r = await upsertLovedPlaylist(api, []);
+    expect(r.created).toBe(true);
+    expect(r.playlistIdChanged).toBe(false);
+    expect(api.state).toHaveLength(1);
+    expect(api.state[0].name).toBe(LOVED_PLAYLIST_NAME);
+    expect(api.state[0].songs).toEqual([]);
+    expect(api.state[0].type).toBe("normal");
+  });
+
+  it("cover-refreshes existing: removes old, adds new, keeps id", async () => {
+    const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [1, 2, 3] }]);
+    const r = await upsertLovedPlaylist(api, [3, 9]);
+    expect(r.playlistId).toBe(7);
+    expect(r.created).toBe(false);
+    expect(r.playlistIdChanged).toBe(false);
+    expect(r.writeMethod).toBe("clearAdd");
+    expect(api.state[0].songs).toEqual([3, 9]);
+  });
+
   it("creates / refreshes only the configured name; leaves old name alone", async () => {
     const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [1, 2] }]);
     const r = await upsertLovedPlaylist(api, [9], "My Loved");
@@ -184,58 +448,135 @@ describe("upsertLovedPlaylist custom name", () => {
     expect(neu?.songs).toEqual([9]);
   });
 
-  it("cover-refreshes existing custom-named playlist", async () => {
-    const api = mockApi([{ id: 3, name: "红心收藏", songs: [1] }]);
-    const r = await upsertLovedPlaylist(api, [2, 3], "红心收藏");
-    expect(r.playlistId).toBe(3);
+  it("recreates a normal playlist when clear fails", async () => {
+    const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [1, 2] }]);
+    api.removeSongs = async () => {
+      throw new Error("clear failed");
+    };
+    const r = await upsertLovedPlaylist(api, [9]);
+    expect(r.created).toBe(true);
+    expect(r.playlistIdChanged).toBe(true);
+    expect(r.writeMethod).toBe("recreate");
+    expect(api.calls.delete).toEqual([7]);
+    expect(api.calls.create).toBe(1);
+    expect(api.state.find((p) => p.name === LOVED_PLAYLIST_NAME)?.songs).toEqual([9]);
+    expect(api.state.find((p) => p.id === 7)).toBeUndefined();
+  });
+
+  it("never delete+rebuilds built-in 收藏 when name happens to match", async () => {
+    const api = mockApi(favoritesFixtures());
+    api.replaceSongs = async () => {
+      throw new Error("cannot replace built-in playlist");
+    };
+    const r = await upsertLovedPlaylist(api, [9], FAVORITES_PLAYLIST_NAME);
+    expect(r.playlistId).toBe(1);
     expect(r.created).toBe(false);
-    expect(api.state[0].songs).toEqual([2, 3]);
+    expect(r.playlistIdChanged).toBe(false);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([9]);
+  });
+
+  it("does not delete+rebuild built-in when clear fails", async () => {
+    const api = mockApi(favoritesFixtures());
+    api.replaceSongs = async () => {
+      throw new Error("cannot replace built-in playlist");
+    };
+    api.removeSongs = async () => {
+      throw new Error("clear failed");
+    };
+    await expect(upsertLovedPlaylist(api, [9], FAVORITES_PLAYLIST_NAME)).rejects.toThrow(/clear failed/);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([1, 2, 3]);
   });
 });
 
-describe("syncLovedToPlaylist playlistName", () => {
-  it("uses resolved playlistName and sets targetChanged", async () => {
-    const scrobbler = {
-      getLovedTracks: async () => ({
-        tracks: [{ artist: "A", title: "T1" }],
-        truncated: false,
-      }),
-    };
-    const songsApi = {
-      list: async () => [{ id: 1, artist: "A", title: "T1" }],
-    };
-    const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [] }]);
+describe("syncLovedToPlaylist playlist target", () => {
+  const scrobbler = {
+    getLovedTracks: async () => ({
+      tracks: [{ artist: "A", title: "T1" }],
+      truncated: false,
+    }),
+  };
+  const songsApi = {
+    list: async () => [{ id: 1, artist: "A", title: "T1" }],
+  };
+
+  it("missing target still writes to built-in 收藏", async () => {
+    const api = mockApi(favoritesFixtures());
     const r = await syncLovedToPlaylist({
       scrobbler: scrobbler as any,
       username: "u",
       songsApi: songsApi as any,
       playlistsApi: api,
+      playlistName: "My Loved",
+      now: () => 200,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.playlistId).toBe(1);
+    expect(r.playlistName).toBe(FAVORITES_PLAYLIST_NAME);
+    expect(api.calls.create).toBe(0);
+    expect(api.state.find((p) => p.name === "My Loved")).toBeUndefined();
+  });
+
+  it("writes to a custom playlist by name and creates it when missing", async () => {
+    const api = mockApi(favoritesFixtures());
+    const r = await syncLovedToPlaylist({
+      scrobbler: scrobbler as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      target: "playlist",
       playlistName: "  ",
       previousPlaylistName: LOVED_PLAYLIST_NAME,
-      now: () => 99,
+      now: () => 201,
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.playlistName).toBe(LOVED_PLAYLIST_NAME);
-    // previous === resolved → not changed
     expect(r.targetChanged).toBe(false);
+    expect(api.state.find((p) => p.id === 11)?.songs).toEqual([1]);
+    // favorites left alone
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([1, 2, 3]);
 
     const r2 = await syncLovedToPlaylist({
       scrobbler: scrobbler as any,
       username: "u",
       songsApi: songsApi as any,
       playlistsApi: api,
+      target: "playlist",
       playlistName: "Alt Loved",
       previousPlaylistName: LOVED_PLAYLIST_NAME,
-      now: () => 100,
+      now: () => 202,
     });
     expect(r2.ok).toBe(true);
     if (!r2.ok) return;
     expect(r2.playlistName).toBe("Alt Loved");
     expect(r2.targetChanged).toBe(true);
+    expect(r2.created).toBe(true);
     expect(api.state.find((p) => p.name === "Alt Loved")?.songs).toEqual([1]);
-    // old default playlist untouched by second sync's matching set write to new name
-    expect(api.state.find((p) => p.name === LOVED_PLAYLIST_NAME)?.songs).toEqual([1]);
+    expect(api.state.find((p) => p.id === 11)?.songs).toEqual([1]);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([1, 2, 3]);
+  });
+
+  it("cover-refreshes an existing custom-named playlist", async () => {
+    const api = mockApi([{ id: 3, name: "红心收藏", songs: [8], type: "normal", labels: [] }]);
+    const r = await syncLovedToPlaylist({
+      scrobbler: scrobbler as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      target: "playlist",
+      playlistName: "红心收藏",
+      now: () => 203,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.playlistId).toBe(3);
+    expect(r.created).toBe(false);
+    expect(api.state[0].songs).toEqual([1]);
+    expect(api.calls.delete).toEqual([]);
   });
 });
-

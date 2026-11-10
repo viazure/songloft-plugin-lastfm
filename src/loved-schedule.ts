@@ -1,5 +1,5 @@
 /**
- * Loved → playlist scheduled sync (plugin-local timer).
+ * Loved → Songloft 红心（收藏） scheduled sync (plugin-local timer).
  * Independent of host keep-alive / miot cron / onlyMiot.
  */
 

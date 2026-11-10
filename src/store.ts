@@ -3,14 +3,40 @@ import { DEFAULT_LOVED_SCHEDULE, normalizeIntervalHours } from "./loved-schedule
 import type { StatsScheduleState } from "./stats-schedule";
 import { DEFAULT_STATS_SCHEDULE, normalizeStatsIntervalHours } from "./stats-schedule";
 import { normalizeHardCap, STATS_SYNC_DEFAULT_HARD_CAP, NEAR_WINDOW_STRATEGY } from "./stats-sync";
+import {
+  deriveOnlyMiot,
+  normalizeScrobbleSources,
+  sourcesFromLegacyOnlyMiot,
+  type ScrobblePlaySource,
+} from "./source-filter";
+
+export type LovedSyncTarget = "favorites" | "playlist";
+
+/** Missing / unknown values resolve to favorites. */
+export function normalizeLovedSyncTarget(v: unknown): LovedSyncTarget {
+  return v === "playlist" ? "playlist" : "favorites";
+}
 
 export interface PluginSettings {
   apiKey: string;
   apiSecret: string;
   sessionKey: string;
   username: string;
-  /** When true, only sync events with source === "miot". */
+  /**
+   * Derived from scrobbleSources: true iff the only selected source is miot.
+   * Kept so older status/logic stays consistent.
+   */
   onlyMiot: boolean;
+  /** Record Song.type === "local". Default true. */
+  scrobbleLocal: boolean;
+  /**
+   * Record network content: Song.type === "remote" or "radio"
+   * (third-party plugin sources, internet radio, and other non-local sources).
+   * Default true. Missing values are treated as true; an explicit false is kept.
+   */
+  scrobbleNetwork: boolean;
+  /** Playback sources to record. Default both miot and songloft-player. */
+  scrobbleSources: ScrobblePlaySource[];
   enabled: boolean;
   pendingToken: string;
   /** True after key rotate / invalid session — UI shows「需重新连接」. */
@@ -21,7 +47,9 @@ export interface PluginSettings {
   delayPercent: number;
   /** Pano-like: absolute delay cap (sec). Default 240. */
   delayMaxSec: number;
-  /** Songloft playlist name for Loved sync. Empty → "Last.fm Loved". */
+  /** Loved sync destination. Missing / unknown → favorites (built-in 收藏). */
+  lovedSyncTarget: LovedSyncTarget;
+  /** Custom playlist name when lovedSyncTarget is "playlist". Empty → "Last.fm Loved". */
   lovedPlaylistName: string;
   /** Max recent tracks per stats sync (1..1000, default 500). */
   statsSyncHardCap: number;
@@ -40,12 +68,16 @@ const DEFAULTS: PluginSettings = {
   sessionKey: "",
   username: "",
   onlyMiot: false,
+  scrobbleLocal: true,
+  scrobbleNetwork: true,
+  scrobbleSources: ["miot", "songloft-player"],
   enabled: true,
   pendingToken: "",
   needsReconnect: false,
   minDurationSec: 30,
   delayPercent: 50,
   delayMaxSec: 240,
+  lovedSyncTarget: "favorites",
   lovedPlaylistName: "Last.fm Loved",
   statsSyncHardCap: STATS_SYNC_DEFAULT_HARD_CAP,
 };
@@ -73,18 +105,25 @@ export async function loadSettings(): Promise<PluginSettings> {
   try {
     const raw = await songloft.storage.get(SETTINGS_KEY);
     const data = asObject(raw);
+    const scrobbleSources = Array.isArray(data.scrobbleSources)
+      ? normalizeScrobbleSources(data.scrobbleSources)
+      : sourcesFromLegacyOnlyMiot(!!data.onlyMiot);
     return {
       apiKey: typeof data.apiKey === "string" ? data.apiKey : "",
       apiSecret: typeof data.apiSecret === "string" ? data.apiSecret : "",
       sessionKey: typeof data.sessionKey === "string" ? data.sessionKey : "",
       username: typeof data.username === "string" ? data.username : "",
-      onlyMiot: !!data.onlyMiot,
+      scrobbleLocal: data.scrobbleLocal !== false,
+      scrobbleNetwork: data.scrobbleNetwork !== false,
+      scrobbleSources,
+      onlyMiot: deriveOnlyMiot(scrobbleSources),
       enabled: data.enabled !== false,
       pendingToken: typeof data.pendingToken === "string" ? data.pendingToken : "",
       needsReconnect: data.needsReconnect === true,
       minDurationSec: numOr(data.minDurationSec, DEFAULTS.minDurationSec),
       delayPercent: numOr(data.delayPercent, DEFAULTS.delayPercent),
       delayMaxSec: numOr(data.delayMaxSec, DEFAULTS.delayMaxSec),
+      lovedSyncTarget: normalizeLovedSyncTarget(data.lovedSyncTarget),
       lovedPlaylistName:
         typeof data.lovedPlaylistName === "string" ? data.lovedPlaylistName : DEFAULTS.lovedPlaylistName,
       statsSyncHardCap: normalizeHardCap(
@@ -99,9 +138,12 @@ export async function loadSettings(): Promise<PluginSettings> {
 export async function saveSettings(partial: Partial<PluginSettings>): Promise<PluginSettings> {
   const cur = await loadSettings();
   const next: PluginSettings = { ...cur, ...partial };
-  // Drop legacy earlyOnThreshold if still present in raw storage merge paths.
+  next.scrobbleSources = normalizeScrobbleSources(next.scrobbleSources);
+  next.onlyMiot = deriveOnlyMiot(next.scrobbleSources);
+  // Drop legacy keys if still present in raw storage merge paths.
   const toStore = { ...next } as Record<string, unknown>;
   delete toStore.earlyOnThreshold;
+  delete toStore.scrobbleRemote;
   await songloft.storage.set(SETTINGS_KEY, toStore);
   return next;
 }
@@ -197,6 +239,9 @@ export function publicStatus(settings: PluginSettings) {
     needsReconnect: !authorized && settings.needsReconnect === true,
     username: settings.username || "",
     onlyMiot: settings.onlyMiot,
+    scrobbleLocal: settings.scrobbleLocal,
+    scrobbleNetwork: settings.scrobbleNetwork,
+    scrobbleSources: settings.scrobbleSources,
     enabled: settings.enabled,
     hasApiKey: !!settings.apiKey,
     hasApiSecret: !!settings.apiSecret,
@@ -320,7 +365,7 @@ export async function appendScrobbleRecord(input: {
   return next;
 }
 
-/** Last successful/failed Loved→playlist sync summary (settings page). */
+/** Last successful/failed Loved → Songloft 红心（收藏） sync summary (settings page). */
 export interface LovedPlaylistSyncStored {
   ts: number;
   ok: boolean;

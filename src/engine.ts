@@ -16,6 +16,7 @@ import {
   thresholdDelayMs,
   type ScrobbleRuleConfig,
 } from "./rules";
+import { getScrobbleSkipReason } from "./source-filter";
 
 /** In-flight track state for threshold / dedupe. */
 interface ActivePlay {
@@ -81,13 +82,17 @@ export function getScrobbler(): LastFmScrobbler | null {
   return scrobbler;
 }
 
-async function songMeta(songId: number): Promise<{ album?: string; durationSec: number }> {
+async function songMeta(
+  songId: number
+): Promise<{ album?: string; durationSec: number; type?: string }> {
   try {
     const song = await songloft.songs.getById(songId);
     const durationSec =
       typeof song?.duration === "number" && song.duration > 0 ? song.duration : 0;
-    return { album: song?.album || undefined, durationSec };
+    const type = typeof song?.type === "string" && song.type ? song.type : undefined;
+    return { album: song?.album || undefined, durationSec, type };
   } catch {
+    // No type on failure → content policy fail-open (getScrobbleSkipReason).
     return { durationSec: 0 };
   }
 }
@@ -248,7 +253,35 @@ export async function handlePlayEvent(event: PlayEvent): Promise<void> {
 
   const settings = await loadSettings();
   if (!settings.enabled) return;
-  if (settings.onlyMiot && event.source !== "miot") return;
+
+  // Two-axis filter: content (local / network) AND playback source. Sources already
+  // absorb legacy onlyMiot, so do not gate on onlyMiot again.
+  let songType: string | undefined;
+  if (!settings.scrobbleLocal || !settings.scrobbleNetwork) {
+    songType = (await songMeta(songId)).type;
+  }
+  const skipReason = getScrobbleSkipReason({
+    scrobbleLocal: settings.scrobbleLocal,
+    scrobbleNetwork: settings.scrobbleNetwork,
+    scrobbleSources: settings.scrobbleSources,
+    songType,
+    playSource: event.source,
+  });
+  if (skipReason) {
+    songloft.log.info(
+      `[lastfm] skip ${event.type}: ${skipReason} ${artist} - ${title} (${source})`
+    );
+    await appendLog("info", `skip (${event.type}): ${skipReason} · ${artist} - ${title} (${source})`);
+    await appendScrobbleRecord({
+      title,
+      artist,
+      ok: false,
+      reason: skipReason,
+      source,
+      path: event.type,
+    });
+    return;
+  }
 
   const rules = rulesFromSettings(settings);
 

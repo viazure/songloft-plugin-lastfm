@@ -1,10 +1,11 @@
-/** Shared Loved→playlist sync runner (manual + scheduled). */
+/** Shared Loved → Songloft 红心（收藏） sync runner (manual + scheduled). */
 
 import { getScrobbler, refreshScrobbler } from "./engine";
 import {
-  resolveLovedPlaylistName,
   formatLovedSyncSummary,
   syncLovedToPlaylist,
+  FAVORITES_PLAYLIST_NAME,
+  resolveLovedPlaylistName,
   type LovedPlaylistSyncResult,
 } from "./loved-playlist";
 import { lovedScheduler } from "./loved-schedule";
@@ -17,6 +18,7 @@ import {
   loadLovedPlaylistSync,
   loadSettings,
   markSessionInvalid,
+  normalizeLovedSyncTarget,
   saveLovedPlaylistSync,
   type LovedPlaylistSyncStored,
 } from "./store";
@@ -58,6 +60,11 @@ export type LovedSyncRunResult = LovedSyncRunOk | LovedSyncRunFail | LovedSyncRu
 async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedSyncRunOk | LovedSyncRunFail> {
   await refreshScrobbler();
   const settings = await loadSettings();
+  const target = normalizeLovedSyncTarget(settings.lovedSyncTarget);
+  const destTitle =
+    target === "playlist"
+      ? resolveLovedPlaylistName(settings.lovedPlaylistName)
+      : FAVORITES_PLAYLIST_NAME;
   const client = getScrobbler();
   if (!client || !(await client.isReady()) || !settings.username) {
     const reason = !settings.username
@@ -70,10 +77,11 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
       matched: 0,
       unmatched: 0,
       reason,
+      playlistName: destTitle,
     };
     await saveLovedPlaylistSync(fail);
     await appendScrobbleRecord({
-      title: resolveLovedPlaylistName(settings.lovedPlaylistName),
+      title: destTitle,
       artist: "playlist",
       ok: false,
       reason,
@@ -91,14 +99,14 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
   }
 
   const previous = await loadLovedPlaylistSync();
-  const playlistName = resolveLovedPlaylistName(settings.lovedPlaylistName);
   const result: LovedPlaylistSyncResult = await syncLovedToPlaylist({
     scrobbler: client,
     username: settings.username,
     songsApi: songloft.songs,
     playlistsApi: songloft.playlists,
-    playlistName,
-    previousPlaylistName: previous?.playlistName || null,
+    target,
+    playlistName: settings.lovedPlaylistName,
+    previousPlaylistName: previous?.playlistName,
   });
 
   if (!result.ok) {
@@ -109,7 +117,7 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
     const reason = friendlyLastFmError(result.reason);
     const stored = await saveLovedPlaylistSync({ ...result, reason });
     await appendScrobbleRecord({
-      title: resolveLovedPlaylistName(settings.lovedPlaylistName),
+      title: destTitle,
       artist: "playlist",
       ok: false,
       reason,
@@ -129,8 +137,6 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
 
   const summaryBits = `loved ${result.loved} · 对上 ${result.matched} · 没对上 ${result.unmatched}`;
   const truncNote = result.truncated ? " · truncated@1000" : "";
-  const idNote = result.playlistIdChanged ? " · playlist id changed" : "";
-  const targetNote = result.targetChanged ? " · 目标歌单已变" : "";
   const stored = await saveLovedPlaylistSync({
     ts: result.ts,
     ok: true,
@@ -142,13 +148,13 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
     playlistIdChanged: result.playlistIdChanged,
     unmatchedSamples: result.unmatchedSamples,
     playlistName: result.playlistName,
-    reason: summaryBits + truncNote + idNote + targetNote,
+    reason: summaryBits + truncNote,
   });
   await appendScrobbleRecord({
     title: result.playlistName,
     artist: "playlist",
     ok: true,
-    reason: summaryBits + truncNote + targetNote,
+    reason: summaryBits + truncNote,
     path: "loved_playlist_sync",
     source,
   });

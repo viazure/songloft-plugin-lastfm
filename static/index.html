@@ -23,7 +23,7 @@
     button.cta-pulse { box-shadow: 0 0 0 3px color-mix(in srgb, #b90000 35%, transparent); }
     .status-bar {
       display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
-      padding: 12px 14px; border-radius: 12px;
+      margin-top: 12px; padding: 12px 14px; border-radius: 12px;
       border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
       background: color-mix(in srgb, CanvasText 6%, Canvas);
     }
@@ -59,7 +59,29 @@
     }
     .connect-waiting.hidden { display: none; }
     .connect-waiting a { word-break: break-all; }
-    #flash { margin: 8px 0 0; font-size: .9rem; min-height: 1.2em; }
+    .hidden { display: none !important; }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%) translateY(8px);
+      max-width: min(520px, calc(100vw - 32px));
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: color-mix(in srgb, CanvasText 88%, Canvas);
+      color: Canvas;
+      font-size: .9rem;
+      line-height: 1.45;
+      box-shadow: 0 8px 24px color-mix(in srgb, CanvasText 22%, transparent);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 1000;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.ok { background: color-mix(in srgb, #0a7a32 86%, CanvasText); color: #fff; }
+    .toast.err { background: color-mix(in srgb, #b00020 86%, CanvasText); color: #fff; }
+    .toast.warn { background: color-mix(in srgb, #a15c00 86%, CanvasText); color: #fff; }
 
     .scrobble-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
     .scrobble-row {
@@ -77,6 +99,80 @@
     .badge.ok { background: color-mix(in srgb, #0a7a32 18%, Canvas); color: #0a7a32; }
     .badge.err { background: color-mix(in srgb, #b00020 18%, Canvas); color: #b00020; }
     .scrobble-empty { opacity: .65; font-size: .9rem; padding: 8px 0; }
+    .filter-head {
+      font-size: .85rem;
+      font-weight: 650;
+      margin: 16px 0 4px;
+    }
+    .filter-and,
+    .filter-login-hint { margin: 0 0 10px; }
+    fieldset.filter-group {
+      border: 0;
+      margin: 0;
+      padding: 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    fieldset.filter-group legend {
+      font-size: .85rem;
+      font-weight: 650;
+      margin: 0 0 6px;
+      padding: 0;
+    }
+    .filter-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+      background: color-mix(in srgb, CanvasText 4%, Canvas);
+      cursor: pointer;
+      font-size: .9rem;
+    }
+    .filter-row .filter-text { min-width: 0; }
+    .filter-row .filter-label { font-weight: 650; }
+    .filter-row input[type=checkbox] {
+      margin: 0;
+      flex: none;
+      accent-color: #b90000;
+    }
+    .filter-ico {
+      flex: none;
+      display: block;
+      color: color-mix(in srgb, CanvasText 70%, transparent);
+    }
+    .filter-ico svg { display: block; width: 16px; height: 16px; }
+    .filter-row:hover:not(:has(input:disabled)) {
+      background: color-mix(in srgb, CanvasText 8%, Canvas);
+      border-color: color-mix(in srgb, CanvasText 18%, transparent);
+    }
+    .filter-row:has(input:checked) {
+      background: color-mix(in srgb, CanvasText 6%, Canvas);
+      border-color: color-mix(in srgb, CanvasText 22%, transparent);
+    }
+    .filter-row:has(input:checked) .filter-ico { color: CanvasText; }
+    .filter-row:hover:has(input:checked):not(:has(input:disabled)) {
+      background: color-mix(in srgb, CanvasText 9%, Canvas);
+      border-color: color-mix(in srgb, CanvasText 22%, transparent);
+    }
+    .filter-row:has(input:focus-visible) {
+      box-shadow: 0 0 0 3px color-mix(in srgb, #b90000 35%, transparent);
+      outline: none;
+    }
+    .filter-row:has(input:focus-visible) input { outline: none; }
+    .filter-row:has(input:disabled) {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+    .hint.warn {
+      background: color-mix(in srgb, #a15c00 10%, Canvas);
+      color: #a15c00;
+      border: 1px solid color-mix(in srgb, #a15c00 45%, transparent);
+    }
+    #section-scrobble > .grid2 { margin-top: 12px; }
   </style>
 </head>
 <body>
@@ -93,7 +189,6 @@
       <button type="button" class="secondary" id="btnDisconnect" hidden>断开连接</button>
     </div>
   </div>
-  <div id="flash" class="muted"></div>
 
   <!-- 1. 连接账号：未连接展开；已连接整块隐藏。必须在播放记录之上 -->
   <div class="card connect-panel" id="connectPanel">
@@ -132,7 +227,71 @@
       <input id="enabled" type="checkbox" checked />
       <label for="enabled">启用播放记录 <span id="enabledHint" class="muted"></span></label>
     </div>
-    <div class="check"><input id="onlyMiot" type="checkbox" /><label for="onlyMiot">只记录智能音箱（miot）的播放</label></div>
+    <div class="filter-block" id="section-scrobble-filter" aria-busy="true">
+      <div class="filter-head">记录过滤</div>
+      <p class="muted filter-and">内容和播放方式两边都符合，才会记到 Last.fm。</p>
+      <p class="muted filter-login-hint hidden" id="filterLoginHint">（先连接账号）</p>
+
+      <div class="grid2 filter-grid">
+        <fieldset class="filter-group">
+          <legend>记录哪些内容</legend>
+          <label class="filter-row" for="scrobbleLocal">
+            <input id="scrobbleLocal" type="checkbox" checked disabled />
+            <span class="filter-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 18V5l12-2v13" />
+          <circle cx="6" cy="18" r="3" />
+          <circle cx="18" cy="16" r="3" />
+        </svg></span>
+            <span class="filter-text">
+              <span class="filter-label">本地音乐</span>
+            </span>
+          </label>
+          <label class="filter-row" for="scrobbleNetwork" title="包括插件功能带来的三方音乐源等网上来源，勾选后一起记录">
+            <input id="scrobbleNetwork" type="checkbox" checked disabled />
+            <span class="filter-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16.247 7.761a6 6 0 0 1 0 8.478" />
+          <path d="M19.075 4.933a10 10 0 0 1 0 14.134" />
+          <path d="M4.925 19.067a10 10 0 0 1 0-14.134" />
+          <path d="M7.753 16.239a6 6 0 0 1 0-8.478" />
+          <circle cx="12" cy="12" r="2" />
+        </svg></span>
+            <span class="filter-text">
+              <span class="filter-label">网络音乐</span>
+            </span>
+          </label>
+        </fieldset>
+        <fieldset class="filter-group">
+          <legend>记录哪些播放方式</legend>
+          <label class="filter-row" for="scrobbleSourceMiot">
+            <input id="scrobbleSourceMiot" type="checkbox" value="miot" checked disabled />
+            <span class="filter-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect width="16" height="20" x="4" y="2" rx="2" />
+          <path d="M12 6h.01" />
+          <circle cx="12" cy="14" r="4" />
+          <path d="M12 14h.01" />
+        </svg></span>
+            <span class="filter-text">
+              <span class="filter-label">小爱音箱</span>
+            </span>
+          </label>
+          <label class="filter-row" for="scrobbleSourceSongloft">
+            <input id="scrobbleSourceSongloft" type="checkbox" value="songloft-player" checked disabled />
+            <span class="filter-ico" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect width="20" height="14" x="2" y="3" rx="2" />
+          <line x1="8" x2="16" y1="21" y2="21" />
+          <line x1="12" x2="12" y1="17" y2="21" />
+        </svg></span>
+            <span class="filter-text">
+              <span class="filter-label">Songloft 客户端</span>
+            </span>
+          </label>
+        </fieldset>
+      </div>
+
+      <div id="scrobbleFilterEmptyHint" class="hint warn hidden" role="status">
+        这样不会记录任何歌曲。仍可保存，只是不会向 Last.fm 提交播放记录。
+      </div>
+    </div>
     <div class="grid2">
       <div>
         <label>记录歌曲最短时长（秒）</label>
@@ -156,53 +315,38 @@
 
 
 
-  <!-- 2a. 红心（Last.fm love，单向手动） -->
-  <div class="card" id="section-love">
-    <h2>红心（Last.fm）</h2>
-    <p class="muted">把<strong>最近一次开始播放</strong>的曲子在 Last.fm 标喜欢或取消喜欢。只写 Last.fm，不改 Songloft 红心；手动操作不受「只记录音箱」限制。</p>
-    <div id="loveCurrent" class="muted" style="margin-top:8px">当前曲：还没有播放记录。先听一首，或下面手动填。</div>
-    <div class="row">
-      <button type="button" id="btnLove">红心当前曲</button>
-      <button type="button" class="secondary" id="btnUnlove">取消红心</button>
-    </div>
-    <details class="block" style="margin:12px 0 0;border-style:dashed">
-      <summary style="font-size:.95rem">手动指定曲目测试</summary>
-      <div class="body">
-        <div class="grid2">
-          <div>
-            <label>艺人</label>
-            <input id="loveArtist" type="text" placeholder="Artist" />
-          </div>
-          <div>
-            <label>曲名</label>
-            <input id="loveTitle" type="text" placeholder="Title" />
-          </div>
-        </div>
-        <div class="row">
-          <button type="button" class="secondary" id="btnLoveProbe">手动标红心</button>
-          <button type="button" class="secondary" id="btnUnloveProbe">手动取消红心</button>
-        </div>
-      </div>
-    </details>
-  </div>
-
-  
-  <!-- 2a2. Loved → 歌单（弱替代，非宿主红心双向） -->
+  <!-- 2a2. Loved → Songloft 红心（收藏） -->
   <div class="card" id="section-loved-playlist">
-    <h2>Loved 歌单</h2>
-    <p class="muted">把 Last.fm 喜欢的歌同步成本机歌单，按「艺人 + 歌名」与曲库比对，每次同步覆盖刷新。与 Songloft 红心不互通；未命中的歌不下载。改名后只覆盖新名那张，旧歌单保留。</p>
-    <label for="lovedPlaylistName">Loved 歌单名</label>
-    <input id="lovedPlaylistName" type="text" placeholder="Last.fm Loved" />
+    <h2>红心同步（Last.fm → Songloft）</h2>
+    <p class="muted">把 Last.fm 喜欢的歌按「艺人 + 歌名」对上曲库后，覆盖写入下面所选目的地。默认是 Songloft 红心（内置「收藏」）：找不到就失败，不会新建，也不会删除重建内置歌单。也可改同步到自定义普通歌单（名称留空则用 Last.fm Loved；没有同名歌单就新建）。未命中的歌不下载；目的地里原先有、但 Last.fm 没有的会被拿掉。不会改 Last.fm，也不做反向同步。</p>
+    <fieldset class="filter-group" style="margin-top:12px">
+      <legend>同步到</legend>
+      <label class="filter-row" for="lovedSyncTargetFavorites">
+        <input id="lovedSyncTargetFavorites" type="radio" name="lovedSyncTarget" value="favorites" checked />
+        <span class="filter-text"><span class="filter-label">Songloft 红心（收藏）</span></span>
+      </label>
+      <label class="filter-row" for="lovedSyncTargetPlaylist">
+        <input id="lovedSyncTargetPlaylist" type="radio" name="lovedSyncTarget" value="playlist" />
+        <span class="filter-text"><span class="filter-label">自定义歌单</span></span>
+      </label>
+    </fieldset>
+    <div id="lovedPlaylistNameWrap" class="hidden">
+      <label for="lovedPlaylistName">歌单名称</label>
+      <input id="lovedPlaylistName" type="text" placeholder="Last.fm Loved" />
+      <p class="muted">留空则用 Last.fm Loved。按名称查找，没有同名普通歌单时会新建。</p>
+    </div>
+    <div class="row">
+      <button type="button" class="secondary" id="btnSaveLovedTarget">保存同步目标</button>
+    </div>
     <div id="lovedSyncLast" class="muted" style="margin-top:8px">上次：尚未同步过</div>
     <div id="lovedSyncNext" class="muted" style="margin-top:4px">下次：—</div>
     <div class="row" style="margin-top:10px">
-      <button type="button" id="btnSyncLoved">同步 Loved 到歌单</button>
-      <button type="button" class="secondary" id="btnSaveLovedName">保存歌单名</button>
+      <button type="button" id="btnSyncLoved">立即同步</button>
     </div>
     <div class="row" style="margin-top:12px; align-items:center; gap:12px; flex-wrap:wrap">
       <label style="display:flex; align-items:center; gap:6px; margin:0">
         <input id="lovedScheduleEnabled" type="checkbox" />
-        定时同步 Loved 歌单
+        定时同步
       </label>
       <label for="lovedScheduleIntervalHours" style="margin:0">间隔</label>
       <select id="lovedScheduleIntervalHours">
@@ -212,7 +356,7 @@
       </select>
       <button type="button" class="secondary" id="btnSaveLovedSchedule">保存定时</button>
     </div>
-    <p class="muted" style="margin-top:6px">默认关闭。开启后按间隔自动覆盖刷新，与手动同步一致；断网也会尝试，失败仅记录，不会自动关闭。</p>
+    <p class="muted" style="margin-top:6px">默认关闭。开启后按间隔自动把 Last.fm 红心覆盖同步到当前目的地，与手动同步一致；断网也会尝试，失败仅记录，不会自动关闭。</p>
   </div>
 
   <!-- 2a3. Last.fm → 播放统计 -->
@@ -243,7 +387,7 @@
 <!-- 2b. 最近 scrobble 观测 -->
   <div class="card" id="section-recent">
     <h2>最近记录</h2>
-    <p class="muted">最近 20 条成功或失败的记录：播放记录、红心、Loved 歌单与播放统计同步，供排查。密钥不会显示。</p>
+    <p class="muted">最近 20 条成功或失败的记录：播放记录、红心、红心同步与播放统计同步，供排查。密钥不会显示。</p>
     <div class="row" style="margin-top:8px">
       <button type="button" class="secondary" id="btnReloadScrobbles">刷新记录</button>
     </div>
@@ -272,6 +416,36 @@
     <summary>诊断</summary>
     <div class="body">
       <p class="muted">手动测试，不经过音箱；请勿短时间内反复点击，以免触发 Last.fm 限流。</p>
+      <details class="block" id="section-love" style="margin:12px 0 0;border-style:dashed">
+        <summary style="font-size:.95rem">红心（Last.fm）</summary>
+        <div class="body">
+          <p class="muted">把<strong>最近一次开始播放</strong>的曲子在 Last.fm 标喜欢或取消喜欢。只写 Last.fm，不改 Songloft 红心；手动操作不受记录过滤限制。</p>
+          <div id="loveCurrent" class="muted" style="margin-top:8px">当前曲：还没有播放记录。先听一首，或下面手动填。</div>
+          <div class="row">
+            <button type="button" id="btnLove">红心当前曲</button>
+            <button type="button" class="secondary" id="btnUnlove">取消红心</button>
+          </div>
+          <details class="block" style="margin:12px 0 0;border-style:dashed">
+            <summary style="font-size:.95rem">手动指定曲目测试</summary>
+            <div class="body">
+              <div class="grid2">
+                <div>
+                  <label>艺人</label>
+                  <input id="loveArtist" type="text" placeholder="Artist" />
+                </div>
+                <div>
+                  <label>曲名</label>
+                  <input id="loveTitle" type="text" placeholder="Title" />
+                </div>
+              </div>
+              <div class="row">
+                <button type="button" class="secondary" id="btnLoveProbe">手动标红心</button>
+                <button type="button" class="secondary" id="btnUnloveProbe">手动取消红心</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </details>
       <div class="row">
         <button class="secondary" id="btnNp">测正在播放</button>
         <button class="secondary" id="btnSc">测记录播放</button>
@@ -284,10 +458,7 @@
     </div>
   </details>
 
+  <div id="flash" class="toast" role="status" aria-live="polite"></div>
   <script src="js/app.js"></script>
 </body>
 </html>
-
-
-
-

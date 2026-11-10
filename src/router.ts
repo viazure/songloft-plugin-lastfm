@@ -15,6 +15,7 @@ import {
   loadSettings,
   loadStatsSyncState,
   markSessionInvalid,
+  normalizeLovedSyncTarget,
   publicStatus,
   saveLovedSchedule,
   saveStatsSchedule,
@@ -33,6 +34,11 @@ import {
 import { runStatsSync, enqueueFullStatsSync, isStatsSyncBusy, isFullStatsSyncQueued } from "./stats-sync-run";
 import { statsScheduler } from "./stats-schedule";
 import { probeStatsAvailable } from "./stats-client";
+import {
+  deriveOnlyMiot,
+  normalizeScrobbleSources,
+  sourcesFromLegacyOnlyMiot,
+} from "./source-filter";
 
 const router = createRouter();
 
@@ -85,11 +91,15 @@ router.get("/api/settings", async () => {
     sessionKeySet: !!settings.sessionKey,
     username: settings.username,
     onlyMiot: settings.onlyMiot,
+    scrobbleLocal: settings.scrobbleLocal !== false,
+    scrobbleNetwork: settings.scrobbleNetwork !== false,
+    scrobbleSources: settings.scrobbleSources,
     enabled: settings.enabled,
     needsReconnect: settings.needsReconnect === true,
     minDurationSec: settings.minDurationSec,
     delayPercent: settings.delayPercent,
     delayMaxSec: settings.delayMaxSec,
+    lovedSyncTarget: normalizeLovedSyncTarget(settings.lovedSyncTarget),
     lovedPlaylistName: resolveLovedPlaylistName(settings.lovedPlaylistName),
     lovedScheduleEnabled: !!schedule.enabled,
     lovedScheduleIntervalHours: schedule.intervalHours,
@@ -119,7 +129,18 @@ router.post("/api/settings", async (req) => {
     patch.sessionKey = body.sessionKey.trim();
   }
   if (typeof body.username === "string") patch.username = body.username.trim();
-  if (typeof body.onlyMiot === "boolean") patch.onlyMiot = body.onlyMiot;
+  if (typeof body.scrobbleLocal === "boolean") patch.scrobbleLocal = body.scrobbleLocal;
+  if (typeof body.scrobbleNetwork === "boolean") patch.scrobbleNetwork = body.scrobbleNetwork;
+  if (Array.isArray(body.scrobbleSources)) {
+    const sources = normalizeScrobbleSources(body.scrobbleSources);
+    patch.scrobbleSources = sources;
+    patch.onlyMiot = deriveOnlyMiot(sources);
+  } else if (typeof body.onlyMiot === "boolean") {
+    // Legacy clients: map onlyMiot into scrobbleSources when sources not posted.
+    const sources = sourcesFromLegacyOnlyMiot(body.onlyMiot);
+    patch.scrobbleSources = sources;
+    patch.onlyMiot = deriveOnlyMiot(sources);
+  }
   if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
   if (typeof body.minDurationSec === "number" || typeof body.minDurationSec === "string") {
     const n = Number(body.minDurationSec);
@@ -132,6 +153,9 @@ router.post("/api/settings", async (req) => {
   if (typeof body.delayMaxSec === "number" || typeof body.delayMaxSec === "string") {
     const n = Number(body.delayMaxSec);
     if (Number.isFinite(n)) patch.delayMaxSec = n;
+  }
+  if (typeof body.lovedSyncTarget === "string") {
+    patch.lovedSyncTarget = normalizeLovedSyncTarget(body.lovedSyncTarget);
   }
   if (typeof body.lovedPlaylistName === "string") {
     // Persist raw (may be blank); resolve at sync/read time so empty → default.
@@ -495,7 +519,7 @@ router.post("/api/test/unlove", async (req) => {
 });
 
 
-/** Last loved→playlist sync summary + schedule state for settings page. */
+/** Last Loved → Songloft destination (收藏 or custom playlist) sync summary + schedule. */
 router.get("/api/loved-playlist", async () => {
   const last = await loadLovedPlaylistSync();
   const schedule = lovedScheduler.getState();
@@ -513,9 +537,9 @@ router.get("/api/loved-playlist", async () => {
 });
 
 /**
- * Sync Last.fm loved tracks into Songloft playlist (configurable name; default Last.fm Loved).
+ * Sync Last.fm Loved tracks into the current destination (built-in 收藏 or a custom playlist).
  * Explicit user action — not gated by onlyMiot; isolated from scrobble/flush/keep-alive.
- * Shares exclusive lock + cover-refresh pipeline with the scheduled tick.
+ * Shares exclusive lock + overwrite pipeline with the scheduled tick.
  */
 router.post("/api/loved-playlist/sync", async () => {
   const result = await runLovedPlaylistSync("manual");
