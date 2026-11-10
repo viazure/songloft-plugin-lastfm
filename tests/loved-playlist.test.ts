@@ -11,6 +11,7 @@ import {
   FAVORITES_PLAYLIST_NAME,
   resolveLovedPlaylistName,
   getReplaceSongs,
+  listAllPlaylistSongs,
 } from "../src/loved-playlist";
 import type { PlaylistsApi } from "../src/loved-playlist";
 
@@ -46,10 +47,14 @@ function mockSong(id: number): Song {
   };
 }
 
-function mockApi(initial: PlaylistRow[]): PlaylistsApi & {
+function mockApi(
+  initial: PlaylistRow[],
+  opts?: { pageSize?: number }
+): PlaylistsApi & {
   state: PlaylistRow[];
   calls: { create: number; delete: number[]; replaceSongs: number[][]; removeSongs: number[][]; addSongs: number[][] };
 } {
+  const hostPageSize = opts?.pageSize ?? 2;
   const state = initial.map((p) => ({
     ...p,
     songs: [...p.songs],
@@ -100,9 +105,14 @@ function mockApi(initial: PlaylistRow[]): PlaylistsApi & {
         sort_order: "asc",
       };
     },
-    async getSongs(playlistId) {
+    async getSongs(playlistId, options) {
       const p = state.find((x) => x.id === playlistId);
-      return (p?.songs || []).map(mockSong);
+      const all = (p?.songs || []).map(mockSong);
+      // Simulate a host that paginates by default if limit is omitted.
+      const offset = typeof options?.offset === "number" && options.offset > 0 ? Math.floor(options.offset) : 0;
+      const limit =
+        typeof options?.limit === "number" && options.limit > 0 ? Math.floor(options.limit) : hostPageSize;
+      return all.slice(offset, offset + limit);
     },
     async addSongs(playlistId, songIds) {
       calls.addSongs.push([playlistId, ...songIds]);
@@ -243,6 +253,57 @@ describe("writeFavoritesPlaylist", () => {
     expect(api.state.find((p) => p.id === 1)?.songs).toEqual([]);
     expect(api.calls.delete).toEqual([]);
     expect(api.calls.create).toBe(0);
+  });
+
+  it("paginates getSongs so leftovers on later pages are fully removed", async () => {
+    const api = mockApi(
+      [
+        {
+          id: 1,
+          name: FAVORITES_PLAYLIST_NAME,
+          songs: [1, 2, 3, 4, 5, 6, 7],
+          type: "normal",
+          labels: ["built_in"],
+        },
+      ],
+      { pageSize: 2 }
+    );
+    const r = await writeFavoritesPlaylist(api, [7, 99], 1);
+    expect(r.writeMethod).toBe("clearAdd");
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([7, 99]);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+  });
+
+  it("keeps previous favorites songs if add fails after write has started", async () => {
+    const api = mockApi(favoritesFixtures());
+    const original = [...(api.state.find((p) => p.id === 1)?.songs ?? [])];
+    const addOrig = api.addSongs;
+    api.addSongs = async (playlistId, songIds) => {
+      await addOrig(playlistId, songIds);
+      throw new Error("add failed after write");
+    };
+    await expect(writeFavoritesPlaylist(api, [3, 9], 1)).rejects.toThrow(/add failed after write/);
+    const songs = api.state.find((p) => p.id === 1)?.songs ?? [];
+    expect(songs).not.toEqual([]);
+    expect(songs).toEqual(expect.arrayContaining(original));
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    expect(api.calls.removeSongs).toEqual([]);
+  });
+});
+
+describe("listAllPlaylistSongs", () => {
+  it("walks multiple pages until a short page and collects every song", async () => {
+    const api = mockApi([{ id: 7, name: "P", songs: [1, 2, 3, 4, 5] }], { pageSize: 2 });
+    const songs = await listAllPlaylistSongs(api, 7, 2);
+    expect(songs.map((s) => s.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("returns a single short page as-is", async () => {
+    const api = mockApi([{ id: 7, name: "P", songs: [1, 2] }], { pageSize: 10 });
+    const songs = await listAllPlaylistSongs(api, 7, 10);
+    expect(songs.map((s) => s.id)).toEqual([1, 2]);
   });
 });
 
@@ -488,7 +549,23 @@ describe("upsertLovedPlaylist", () => {
     await expect(upsertLovedPlaylist(api, [9], FAVORITES_PLAYLIST_NAME)).rejects.toThrow(/clear failed/);
     expect(api.calls.delete).toEqual([]);
     expect(api.calls.create).toBe(0);
-    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([1, 2, 3]);
+    // Incremental path adds missing first; originals must still be present.
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual([1, 2, 3, 9]);
+  });
+
+  it("does not empty or recreate a custom playlist when add fails", async () => {
+    const api = mockApi([{ id: 7, name: LOVED_PLAYLIST_NAME, songs: [1, 2, 3] }]);
+    const addOrig = api.addSongs;
+    api.addSongs = async (playlistId, songIds) => {
+      await addOrig(playlistId, songIds);
+      throw new Error("add failed after write");
+    };
+    await expect(upsertLovedPlaylist(api, [3, 9])).rejects.toThrow(/add failed after write/);
+    expect(api.calls.delete).toEqual([]);
+    expect(api.calls.create).toBe(0);
+    const songs = api.state.find((p) => p.id === 7)?.songs ?? [];
+    expect(songs).not.toEqual([]);
+    expect(songs).toEqual(expect.arrayContaining([1, 2, 3]));
   });
 });
 

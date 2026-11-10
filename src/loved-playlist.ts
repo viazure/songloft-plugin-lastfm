@@ -20,6 +20,8 @@ export const FAVORITES_PLAYLIST_NAME = "收藏";
 
 export const LOVED_HARD_CAP = 1000;
 export const ADD_CHUNK = 200;
+/** Page size for playlists.getSongs pagination. */
+export const PLAYLIST_SONGS_PAGE_SIZE = 500;
 
 export interface LovedPlaylistSyncOk {
   ok: true;
@@ -143,14 +145,57 @@ export function getReplaceSongs(
   return (playlistId, songIds) => fn.call(api, playlistId, songIds);
 }
 
-async function clearPlaylistSongs(api: PlaylistsApi, playlistId: number): Promise<number> {
-  const songs = await api.getSongs(playlistId);
-  const ids = (songs || []).map((s) => s.id).filter((id) => typeof id === "number");
-  if (!ids.length) return 0;
-  for (let i = 0; i < ids.length; i += ADD_CHUNK) {
-    await api.removeSongs(playlistId, ids.slice(i, i + ADD_CHUNK));
+/**
+ * Load every song in a playlist via getSongs limit/offset.
+ * Stops on an empty or short page, or if the offset would not advance.
+ * Also stops if a full page repeats the previous page (host ignoring offset).
+ */
+export async function listAllPlaylistSongs(
+  api: Pick<PlaylistsApi, "getSongs">,
+  playlistId: number,
+  pageSize: number = PLAYLIST_SONGS_PAGE_SIZE
+): Promise<Song[]> {
+  const size =
+    Number.isFinite(pageSize) && pageSize > 0 ? Math.floor(pageSize) : PLAYLIST_SONGS_PAGE_SIZE;
+  const out: Song[] = [];
+  let offset = 0;
+  let prevKey: string | null = null;
+  for (;;) {
+    const batch = await api.getSongs(playlistId, { limit: size, offset });
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    const key = batch.map((s) => s?.id).join(",");
+    if (prevKey !== null && key === prevKey) break;
+    prevKey = key;
+    out.push(...batch);
+    if (batch.length < size) break;
+    const nextOffset = offset + batch.length;
+    if (nextOffset <= offset) break;
+    offset = nextOffset;
   }
-  return ids.length;
+  return out;
+}
+
+function playlistSongIds(songs: Song[] | null | undefined): number[] {
+  return (songs || []).map((s) => s.id).filter((id): id is number => typeof id === "number");
+}
+
+function diffPlaylistSongs(
+  currentIds: number[],
+  desiredIds: number[]
+): { toAdd: number[]; toRemove: number[] } {
+  const currentSet = new Set(currentIds);
+  const desiredSet = new Set(desiredIds.filter((id) => typeof id === "number"));
+  const toAdd: number[] = [];
+  const seenAdd = new Set<number>();
+  for (const id of desiredIds) {
+    if (typeof id !== "number") continue;
+    if (!currentSet.has(id) && !seenAdd.has(id)) {
+      toAdd.push(id);
+      seenAdd.add(id);
+    }
+  }
+  const toRemove = currentIds.filter((id) => !desiredSet.has(id));
+  return { toAdd, toRemove };
 }
 
 async function addInChunks(api: PlaylistsApi, playlistId: number, songIds: number[]): Promise<void> {
@@ -159,11 +204,43 @@ async function addInChunks(api: PlaylistsApi, playlistId: number, songIds: numbe
   }
 }
 
+async function removeInChunks(api: PlaylistsApi, playlistId: number, songIds: number[]): Promise<void> {
+  for (let i = 0; i < songIds.length; i += ADD_CHUNK) {
+    await api.removeSongs(playlistId, songIds.slice(i, i + ADD_CHUNK));
+  }
+}
+
+/**
+ * Incremental rewrite: load the full playlist (paged), add missing songs first, then
+ * remove extras. If add fails, existing songs remain. Returns ids still to remove
+ * after the add phase (add errors propagate unchanged).
+ */
+async function addMissingPlaylistSongs(
+  api: PlaylistsApi,
+  playlistId: number,
+  songIds: number[]
+): Promise<number[]> {
+  const currentIds = playlistSongIds(await listAllPlaylistSongs(api, playlistId));
+  const { toAdd, toRemove } = diffPlaylistSongs(currentIds, songIds);
+  if (toAdd.length) await addInChunks(api, playlistId, toAdd);
+  return toRemove;
+}
+
+async function applyPlaylistDiff(
+  api: PlaylistsApi,
+  playlistId: number,
+  songIds: number[]
+): Promise<void> {
+  const toRemove = await addMissingPlaylistSongs(api, playlistId, songIds);
+  if (toRemove.length) await removeInChunks(api, playlistId, toRemove);
+}
+
 /**
  * Overwrite the built-in 收藏 playlist with songIds.
  * Prefers playlists.replaceSongs when the host exposes it; on missing method or failure
- * (including host "cannot replace built-in playlist"), falls back to chunked removeSongs + addSongs.
- * Never deletes or recreates the playlist (built-in playlists cannot be deleted).
+ * (including host "cannot replace built-in playlist"), falls back to incremental
+ * add-missing-then-remove-extras (writeMethod remains "clearAdd" for compatibility).
+ * Never clears the whole list first. Never deletes or recreates the playlist.
  */
 export async function writeFavoritesPlaylist(
   api: PlaylistsApi,
@@ -176,11 +253,10 @@ export async function writeFavoritesPlaylist(
       await replace(playlistId, songIds);
       return { playlistId, writeMethod: "replaceSongs" };
     } catch {
-      // fall through to clear+add
+      // fall through to incremental add-then-remove
     }
   }
-  await clearPlaylistSongs(api, playlistId);
-  if (songIds.length) await addInChunks(api, playlistId, songIds);
+  await applyPlaylistDiff(api, playlistId, songIds);
   return { playlistId, writeMethod: "clearAdd" };
 }
 
@@ -199,8 +275,9 @@ export function mayDeleteAndRecreatePlaylist(
 }
 
 /**
- * Cover-refresh a named ordinary playlist: clear+add keeping id when possible;
- * if clear fails fatally, delete+recreate is allowed only for a normal non-built-in playlist.
+ * Cover-refresh a named ordinary playlist: incremental add-missing-then-remove-extras,
+ * keeping id when possible; if removal fails fatally, delete+recreate is allowed only
+ * for a normal non-built-in playlist. Add failure does not delete the existing playlist.
  * Missing playlist → create a normal one. Empty matched set → empty playlist (allowed).
  * If the name happens to match the built-in 收藏, write via writeFavoritesPlaylist (never delete).
  */
@@ -229,9 +306,15 @@ export async function upsertLovedPlaylist(
     if (!mayDeleteAndRecreatePlaylist(existing)) {
       throw new Error("不能把内置歌单当作自定义同步目标来删除重建");
     }
+    let toRemove: number[];
     try {
-      await clearPlaylistSongs(api, playlistId);
-      if (songIds.length) await addInChunks(api, playlistId, songIds);
+      toRemove = await addMissingPlaylistSongs(api, playlistId, songIds);
+    } catch (err) {
+      // Add (or list) failed: keep the existing playlist. Do not delete+recreate.
+      throw err;
+    }
+    try {
+      if (toRemove.length) await removeInChunks(api, playlistId, toRemove);
       return { playlistId, created: false, playlistIdChanged: false, writeMethod: "clearAdd" };
     } catch {
       if (typeof api.delete === "function") {
