@@ -1,6 +1,7 @@
 {
   "name": "viazure 的插件源",
   "plugins": [
-    "https://raw.githubusercontent.com/viazure/songloft-plugin-lastfm/main/plugin.json"
+    "https://raw.githubusercontent.com/viazure/songloft-plugin-lastfm/main/plugin.json",
+    "https://raw.githubusercontent.com/viazure/songloft-plugin-podcast/main/plugin.json"
   ]
 }
