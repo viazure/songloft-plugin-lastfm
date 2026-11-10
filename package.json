@@ -1,7 +1,7 @@
 {
   "name": "lastfm",
-  "version": "0.2.0",
-  "description": "听歌自动 Scrobble 到 Last.fm；可配记录规则，可按内容（本地 / 网络音乐）和播放方式（小爱音箱 / Songloft 客户端）筛选；支持红心到 Last.fm（单向）、把 Last.fm Loved 同步到 Songloft 红心（收藏），以及同步到官方播放统计",
+  "version": "0.3.0",
+  "description": "听歌自动 Scrobble 到 Last.fm；可配记录规则，可按内容（本地 / 网络音乐）和播放方式（小爱音箱 / Songloft 客户端）筛选；支持红心到 Last.fm（单向）、把 Last.fm 红心同步到 Songloft「收藏」或自定义歌单，以及同步到官方播放统计",
   "private": true,
   "scripts": {
     "build": "songloft-plugin build",

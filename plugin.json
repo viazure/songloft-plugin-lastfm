@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/songloft-org/plugin-toolchain/main/schemas/plugin.schema.json",
   "name": "Last.fm",
-  "version": "0.2.0",
-  "description": "听歌自动 Scrobble 到 Last.fm；可配记录规则，可按内容（本地 / 网络音乐）和播放方式（小爱音箱 / Songloft 客户端）筛选；支持红心到 Last.fm（单向）、把 Last.fm Loved 同步到 Songloft 红心（收藏），以及同步到官方播放统计",
+  "version": "0.3.0",
+  "description": "听歌自动 Scrobble 到 Last.fm；可配记录规则，可按内容（本地 / 网络音乐）和播放方式（小爱音箱 / Songloft 客户端）筛选；支持红心到 Last.fm（单向）、把 Last.fm 红心同步到 Songloft「收藏」或自定义歌单，以及同步到官方播放统计",
   "author": "viazure",
   "homepage": "https://github.com/viazure/songloft-plugin-lastfm",
   "license": "Apache-2.0",
@@ -17,8 +17,8 @@
     "net"
   ],
   "updateUrl": "https://raw.githubusercontent.com/viazure/songloft-plugin-lastfm/main/plugin.json",
-  "download_url": "https://github.com/viazure/songloft-plugin-lastfm/releases/download/v0.2.0/lastfm.jsplugin.zip",
-  "entryHash": "1c9091321e35ce723fd1439c68ad84343070eaef3b0fbad75ca6a5181a98f5db",
-  "zipHash": "644392eebf0ba3e54f74844ea2696c6b793bd0eebc95ec5865e481336937a0b5",
+  "download_url": "https://github.com/viazure/songloft-plugin-lastfm/releases/download/v0.3.0/lastfm.jsplugin.zip",
+  "entryHash": "0d18ae410434eee35df00b3e615311df574f45542af2d6415540577ccb326cb6",
+  "zipHash": "d3c9aba93de649c933bbfeb7ecdea269575310fe3c80621f4061a92822bfa9a4",
   "icon": "icon.b79ed352.png"
 }
