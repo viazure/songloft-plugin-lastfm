@@ -1,15 +1,18 @@
 /** Shared Loved → Songloft 红心（收藏） sync runner (manual + scheduled). */
 
 import { getScrobbler, refreshScrobbler } from "./engine";
+import { LastFmScrobbler } from "./scrobbler";
 import {
   formatLovedSyncSummary,
   syncLovedToPlaylist,
   FAVORITES_PLAYLIST_NAME,
+  LOVED_HARD_CAP,
   resolveLovedPlaylistName,
   type LovedPlaylistSyncResult,
 } from "./loved-playlist";
 import { lovedScheduler } from "./loved-schedule";
 import { isFullStatsSyncQueued } from "./stats-sync-run";
+import { getWritebackService, syncWritebackSubscription } from "./writeback-service";
 import {
   appendLog,
   appendScrobbleRecord,
@@ -24,6 +27,68 @@ import {
 } from "./store";
 
 export type LovedSyncSource = "manual" | "scheduled";
+
+/** 写回开启且目的地是内置「收藏」时才做三路合并；其余情形保持覆盖语义。 */
+export function shouldUseWritebackMerge(opts: {
+  target: "favorites" | "playlist";
+  writebackEnabled: boolean;
+}): boolean {
+  return opts.target === "favorites" && opts.writebackEnabled === true;
+}
+
+/** 写回开启 + 目的地=收藏：按起点三路合并，不做覆盖式对齐。 */
+async function syncLovedWithWriteback(
+  client: LastFmScrobbler,
+  username: string
+): Promise<LovedPlaylistSyncResult> {
+  const merge = await getWritebackService().reconcileFavorites({
+    scrobbler: client,
+    username,
+    hardCap: LOVED_HARD_CAP,
+  });
+  const ts = Date.now();
+  if (!merge.ok) {
+    return {
+      ok: false,
+      ts,
+      loved: merge.loved,
+      matched: merge.matched,
+      unmatched: merge.unmatched,
+      truncated: merge.truncated,
+      unmatchedSamples: merge.unmatchedSamples,
+      reason: merge.reason || "合并同步失败",
+    };
+  }
+  const note = merge.initializedSnapshot
+    ? "已记下当前喜欢作为起点（本次不补齐历史差异）"
+    : `收藏 +${merge.added}/-${merge.removed} · 红心 +${merge.lovedCount}/-${merge.unlovedCount}` +
+      (merge.conflicts ? ` · 冲突 ${merge.conflicts}（听本地）` : "") +
+      (merge.removalsSuppressed ? " · 列表不完整已跳过删除" : "");
+  // 起点刚落地（例如记起点曾失败后点「立即同步」）时补订阅。
+  if (merge.initializedSnapshot) {
+    try {
+      await syncWritebackSubscription();
+    } catch {
+      /* 订阅失败不回滚已记下的起点 */
+    }
+  }
+  return {
+    ok: true,
+    ts,
+    loved: merge.loved,
+    matched: merge.matched,
+    unmatched: merge.unmatched,
+    truncated: merge.truncated,
+    playlistId: merge.playlistId ?? 0,
+    playlistIdChanged: false,
+    created: false,
+    unmatchedSamples: merge.unmatchedSamples,
+    playlistName: FAVORITES_PLAYLIST_NAME,
+    targetChanged: false,
+    reason: [note, merge.reason].filter(Boolean).join(" · "),
+    removalsSuppressed: merge.removalsSuppressed,
+  };
+}
 
 export interface LovedSyncRunOk {
   ok: true;
@@ -99,15 +164,18 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
   }
 
   const previous = await loadLovedPlaylistSync();
-  const result: LovedPlaylistSyncResult = await syncLovedToPlaylist({
-    scrobbler: client,
-    username: settings.username,
-    songsApi: songloft.songs,
-    playlistsApi: songloft.playlists,
-    target,
-    playlistName: settings.lovedPlaylistName,
-    previousPlaylistName: previous?.playlistName,
-  });
+  const useMerge = shouldUseWritebackMerge({ target, writebackEnabled: settings.lovedWritebackEnabled });
+  const result: LovedPlaylistSyncResult = useMerge
+    ? await syncLovedWithWriteback(client, settings.username)
+    : await syncLovedToPlaylist({
+        scrobbler: client,
+        username: settings.username,
+        songsApi: songloft.songs,
+        playlistsApi: songloft.playlists,
+        target,
+        playlistName: settings.lovedPlaylistName,
+        previousPlaylistName: previous?.playlistName,
+      });
 
   if (!result.ok) {
     if (isInvalidSessionError(result.reason)) {
@@ -148,13 +216,13 @@ async function executeLovedPlaylistSync(source: LovedSyncSource): Promise<LovedS
     playlistIdChanged: result.playlistIdChanged,
     unmatchedSamples: result.unmatchedSamples,
     playlistName: result.playlistName,
-    reason: summaryBits + truncNote,
+    reason: [summaryBits + truncNote, result.reason].filter(Boolean).join(" · "),
   });
   await appendScrobbleRecord({
     title: result.playlistName,
     artist: "playlist",
     ok: true,
-    reason: summaryBits + truncNote,
+    reason: [summaryBits + truncNote, result.reason].filter(Boolean).join(" · "),
     path: "loved_playlist_sync",
     source,
   });

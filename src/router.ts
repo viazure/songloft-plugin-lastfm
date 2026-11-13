@@ -6,6 +6,7 @@ import {
   appendLog,
   appendScrobbleRecord,
   clearSession,
+  clearWritebackSnapshot,
   friendlyLastFmError,
   isInvalidSessionError,
   loadLog,
@@ -14,16 +15,27 @@ import {
   loadScrobbleRecords,
   loadSettings,
   loadStatsSyncState,
+  loadWritebackMeta,
+  loadWritebackSnapshot,
   markSessionInvalid,
   normalizeLovedSyncTarget,
   publicStatus,
   saveLovedSchedule,
   saveStatsSchedule,
   saveSettings,
+  saveWritebackMeta,
 } from "./store";
 import { resolveLovedPlaylistName, formatLovedSyncSummary } from "./loved-playlist";
 import { runLovedPlaylistSync } from "./loved-sync-run";
 import { lovedScheduler, normalizeIntervalHours } from "./loved-schedule";
+import {
+  getWritebackService,
+  hostPlaylistSongsChangeSupported,
+  initWritebackSnapshot,
+  syncWritebackSubscription,
+  resumeWritebackQueue,
+} from "./writeback-service";
+import { HOST_EVENT_STATUS_LINE, HOST_EVENT_SUPPORT_HINT } from "./writeback";
 import {
   formatStatsSyncSummary,
   normalizeHardCap,
@@ -71,6 +83,56 @@ function statusMessage(settings: Awaited<ReturnType<typeof loadSettings>>): stri
   return "已连接，可同步播放";
 }
 
+async function buildWritebackStatusPayload(settings: Awaited<ReturnType<typeof loadSettings>>) {
+  const supported = hostPlaylistSongsChangeSupported();
+  const snapshot = await loadWritebackSnapshot();
+  const meta = await loadWritebackMeta();
+  const runtime = getWritebackService().runtimeStatus();
+  const enabled = settings.lovedWritebackEnabled === true;
+  let statusLine = "未开启";
+  if (!supported) {
+    statusLine = HOST_EVENT_STATUS_LINE;
+  } else if (!enabled) {
+    statusLine = "未开启";
+  } else if (settings.needsReconnect || (!settings.sessionKey && meta.paused)) {
+    statusLine =
+      "写回已暂停：连接已失效，请重新连接账号。重连后会继续未完成的写回，操作不会丢掉。";
+  } else if (runtime.queuePaused || meta.paused) {
+    statusLine =
+      "写回已暂停：连接已失效，请重新连接账号。重连后会继续未完成的写回，操作不会丢掉。";
+  } else if (!snapshot) {
+    statusLine = `已开启，但还没记下当前喜欢：${
+      meta.snapshotError || "请先连接账号，否则无法记下起点，也不会写回"
+    }`;
+  } else if (runtime.deferReason === "busy") {
+    statusLine = "这次没写上：正在同步其它任务，稍后会再试；也可点上方「立即同步」。不要因此关掉开关。";
+  } else if (runtime.deferReason === "retry" || runtime.queueSize > 0) {
+    statusLine = "刚才有改动没写上，正在稍后重试";
+  } else if (meta.lastResultOk === false && meta.lastError) {
+    statusLine = `写回失败：${meta.lastError}`;
+  } else {
+    statusLine =
+      `已记下当前喜欢（${new Date(snapshot.ts).toLocaleString()}）· 即时写回可用` +
+      // 起点是在 Loved 被截断时记下的：后续完整拉取会表现为「分批补齐历史」，先讲清楚。
+      (snapshot.truncated ? " · 起点不完整（记录时 Last.fm 喜欢已截断），可能分批补齐历史" : "");
+  }
+  return {
+    playlistSongsChangeSupported: supported,
+    writebackHostHint: supported ? "" : HOST_EVENT_SUPPORT_HINT,
+    lovedWritebackEnabled: enabled,
+    writebackHasBaseline: !!snapshot,
+    writebackBaselineAt: snapshot?.ts ?? null,
+    writebackSnapshotError: meta.snapshotError || "",
+    writebackQueueSize: runtime.queueSize,
+    writebackQueuePaused: runtime.queuePaused || meta.paused,
+    writebackDeferReason: runtime.deferReason,
+    writebackLastError: meta.lastError || runtime.lastError || "",
+    writebackLastResultOk: meta.lastResultOk,
+    writebackOpenedOnce: meta.openedOnce,
+    writebackStatusLine: statusLine,
+  };
+}
+
 router.get("/api/status", async () => {
   const settings = await loadSettings();
   return jsonResponse({
@@ -84,6 +146,7 @@ router.get("/api/status", async () => {
 router.get("/api/settings", async () => {
   const settings = await loadSettings();
   const schedule = lovedScheduler.getState();
+  const writeback = await buildWritebackStatusPayload(settings);
   return jsonResponse({
     // never echo apiKey/secret/session in clear — only set flags
     apiKeySet: !!settings.apiKey,
@@ -101,6 +164,7 @@ router.get("/api/settings", async () => {
     delayMaxSec: settings.delayMaxSec,
     lovedSyncTarget: normalizeLovedSyncTarget(settings.lovedSyncTarget),
     lovedPlaylistName: resolveLovedPlaylistName(settings.lovedPlaylistName),
+    ...writeback,
     lovedScheduleEnabled: !!schedule.enabled,
     lovedScheduleIntervalHours: schedule.intervalHours,
     lovedScheduleLastSuccessAt: schedule.lastSuccessAt,
@@ -161,6 +225,25 @@ router.post("/api/settings", async (req) => {
     // Persist raw (may be blank); resolve at sync/read time so empty → default.
     patch.lovedPlaylistName = body.lovedPlaylistName;
   }
+  const writebackEnableRequested =
+    typeof body.lovedWritebackEnabled === "boolean" && body.lovedWritebackEnabled === true;
+  const writebackDisableRequested =
+    typeof body.lovedWritebackEnabled === "boolean" && body.lovedWritebackEnabled === false;
+  if (writebackEnableRequested && !hostPlaylistSongsChangeSupported()) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: HOST_EVENT_SUPPORT_HINT,
+        playlistSongsChangeSupported: false,
+        writebackHostHint: HOST_EVENT_SUPPORT_HINT,
+        writebackStatusLine: HOST_EVENT_STATUS_LINE,
+      },
+      400
+    );
+  }
+  if (typeof body.lovedWritebackEnabled === "boolean") {
+    patch.lovedWritebackEnabled = body.lovedWritebackEnabled;
+  }
   if (typeof body.statsSyncHardCap === "number" || typeof body.statsSyncHardCap === "string") {
     patch.statsSyncHardCap = normalizeHardCap(body.statsSyncHardCap);
   }
@@ -215,6 +298,39 @@ router.post("/api/settings", async (req) => {
 
   const settings = await saveSettings(patch as any);
   await refreshScrobbler();
+
+  // 首次打开写回：只记下起点（不追平历史差量）。失败不影响设置保存与开关，
+  // 但完整起点落地前 syncWritebackSubscription 不会订阅。
+  let snapshotInitialized = false;
+  let snapshotError = "";
+  let writebackReopened = false;
+  if (writebackEnableRequested && !cur.lovedWritebackEnabled) {
+    const metaBefore = await loadWritebackMeta();
+    writebackReopened = metaBefore.openedOnce === true;
+    const built = await initWritebackSnapshot();
+    snapshotInitialized = built.ok;
+    snapshotError = built.ok ? "" : built.reason;
+  } else if (writebackDisableRequested && cur.lovedWritebackEnabled) {
+    // 关闭：取消订阅、清除起点；关掉再打开会重新记起点。
+    await clearWritebackSnapshot();
+    const meta = await loadWritebackMeta();
+    await saveWritebackMeta({
+      ...meta,
+      snapshotError: "",
+      lastError: "",
+      lastResultOk: null,
+      paused: false,
+      openedOnce: true,
+    });
+  }
+  const subscribed = await syncWritebackSubscription();
+  // 会话恢复后继续处理积压写回（失效期间不丢操作）。
+  if (settings.lovedWritebackEnabled) {
+    resumeWritebackQueue();
+    const meta = await loadWritebackMeta();
+    if (meta.paused) await saveWritebackMeta({ ...meta, paused: false });
+  }
+
   let schedule = lovedScheduler.getState();
   if (schedulePatch.enabled !== undefined || schedulePatch.intervalHours !== undefined) {
     // Persist + rearm; first enable sets nextDue = now+interval (no immediate sync).
@@ -234,11 +350,17 @@ router.post("/api/settings", async (req) => {
     "info",
     sessionInvalidated ? "settings saved (session cleared; reconnect required)" : "settings saved"
   );
+  const writeback = await buildWritebackStatusPayload(settings);
   return jsonResponse({
     ok: true,
     status: publicStatus(settings),
     sessionInvalidated,
     message: statusMessage(settings),
+    ...writeback,
+    writebackSubscribed: subscribed.subscribed,
+    snapshotInitialized,
+    snapshotError,
+    writebackReopened,
     lovedScheduleEnabled: !!schedule.enabled,
     lovedScheduleIntervalHours: schedule.intervalHours,
     lovedScheduleLastSuccessAt: schedule.lastSuccessAt,
@@ -448,6 +570,8 @@ async function handleLoveAction(
     });
     return jsonResponse({ ok: false, error: "尚未连接账号：需要应用凭证 + 已连接的账号" }, 400);
   }
+  const settings = await loadSettings();
+  const writebackOn = settings.lovedWritebackEnabled === true;
   try {
     if (kind === "love") {
       await client.love(artist, title);
@@ -462,7 +586,25 @@ async function handleLoveAction(
       source: "manual",
     });
     await appendLog("info", `${kind}: ${artist} - ${title}`);
-    return jsonResponse({ ok: true, artist, title, action: kind });
+    // 诊断红心只写 Last.fm：不改 Songloft「收藏」，也不改写回起点；
+    // 下次对账/覆盖才把这次 Last.fm 变化视为对端变更（那时才可能写进「收藏」）。
+    let snapshotUpdated = false;
+    let snapshotNote = "";
+    if (writebackOn) {
+      const noted = await getWritebackService().noteManualLove({ kind, artist, title });
+      snapshotUpdated = noted.snapshotUpdated;
+      snapshotNote = noted.reason || "";
+    }
+    return jsonResponse({
+      ok: true,
+      artist,
+      title,
+      action: kind,
+      favoriteUpdated: false,
+      favoriteNote: "诊断红心只改 Last.fm，不会改 Songloft「收藏」",
+      snapshotUpdated,
+      snapshotNote,
+    });
   } catch (e) {
     if (isInvalidSessionError(e)) {
       await markSessionInvalid();

@@ -1,5 +1,6 @@
 import type { LovedScheduleState } from "./loved-schedule";
 import { DEFAULT_LOVED_SCHEDULE, normalizeIntervalHours } from "./loved-schedule";
+import type { WritebackSnapshot } from "./writeback-merge";
 import type { StatsScheduleState } from "./stats-schedule";
 import { DEFAULT_STATS_SCHEDULE, normalizeStatsIntervalHours } from "./stats-schedule";
 import { normalizeHardCap, STATS_SYNC_DEFAULT_HARD_CAP, NEAR_WINDOW_STRATEGY } from "./stats-sync";
@@ -51,6 +52,8 @@ export interface PluginSettings {
   lovedSyncTarget: LovedSyncTarget;
   /** Custom playlist name when lovedSyncTarget is "playlist". Empty → "Last.fm Loved". */
   lovedPlaylistName: string;
+  /** 收藏变更 → Last.fm love/unlove 写回。独立开关，默认关闭。 */
+  lovedWritebackEnabled: boolean;
   /** Max recent tracks per stats sync (1..1000, default 500). */
   statsSyncHardCap: number;
 }
@@ -79,6 +82,7 @@ const DEFAULTS: PluginSettings = {
   delayMaxSec: 240,
   lovedSyncTarget: "favorites",
   lovedPlaylistName: "Last.fm Loved",
+  lovedWritebackEnabled: false,
   statsSyncHardCap: STATS_SYNC_DEFAULT_HARD_CAP,
 };
 
@@ -126,6 +130,7 @@ export async function loadSettings(): Promise<PluginSettings> {
       lovedSyncTarget: normalizeLovedSyncTarget(data.lovedSyncTarget),
       lovedPlaylistName:
         typeof data.lovedPlaylistName === "string" ? data.lovedPlaylistName : DEFAULTS.lovedPlaylistName,
+      lovedWritebackEnabled: data.lovedWritebackEnabled === true,
       statsSyncHardCap: normalizeHardCap(
         data.statsSyncHardCap !== undefined ? data.statsSyncHardCap : DEFAULTS.statsSyncHardCap
       ),
@@ -206,7 +211,7 @@ export interface ScrobbleRecord {
   /** Human-readable failure reason (never secrets). Optional path hint on success. */
   reason?: string;
   source?: string;
-  /** early-threshold | finish | skip | switch | replay | nowplaying | test | love | unlove | loved_playlist_sync | stats_sync */
+  /** early-threshold | finish | skip | switch | replay | nowplaying | test | love | unlove | loved_playlist_sync | loved_writeback | stats_sync */
   path?: string;
 }
 
@@ -249,6 +254,7 @@ export function publicStatus(settings: PluginSettings) {
     minDurationSec: settings.minDurationSec,
     delayPercent: settings.delayPercent,
     delayMaxSec: settings.delayMaxSec,
+    lovedWritebackEnabled: settings.lovedWritebackEnabled === true,
   };
 }
 
@@ -449,6 +455,112 @@ export async function saveLovedPlaylistSync(
 }
 
 const LOVED_SCHEDULE_KEY = "loved_schedule";
+
+const WRITEBACK_SNAPSHOT_KEY = "loved_writeback_snapshot";
+
+function stringArray(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string" && !!x) : [];
+}
+
+function numberArray(raw: unknown): number[] {
+  return Array.isArray(raw)
+    ? raw.filter((x): x is number => typeof x === "number" && Number.isFinite(x))
+    : [];
+}
+
+/** 写回快照：仅在成功落盘后写入，缺失/损坏一律视为没有快照。 */
+export async function loadWritebackSnapshot(): Promise<WritebackSnapshot | null> {
+  try {
+    const raw = await songloft.storage.get(WRITEBACK_SNAPSHOT_KEY);
+    const data = asObject(raw);
+    if (typeof data.ts !== "number" || !Number.isFinite(data.ts)) return null;
+    const out: WritebackSnapshot = {
+      ts: data.ts,
+      lovedKeys: stringArray(data.lovedKeys),
+      favoriteIds: numberArray(data.favoriteIds),
+    };
+    if (data.songKeys && typeof data.songKeys === "object") {
+      const songKeys: Record<string, string> = {};
+      for (const [k, v] of Object.entries(data.songKeys as Record<string, unknown>)) {
+        if (typeof v === "string" && v) songKeys[k] = v;
+      }
+      out.songKeys = songKeys;
+    }
+    if (data.truncated === true) out.truncated = true;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveWritebackSnapshot(snapshot: WritebackSnapshot): Promise<void> {
+  const toStore: Record<string, unknown> = {
+    ts: snapshot.ts,
+    lovedKeys: stringArray(snapshot.lovedKeys),
+    favoriteIds: numberArray(snapshot.favoriteIds),
+  };
+  if (snapshot.songKeys) toStore.songKeys = { ...snapshot.songKeys };
+  if (snapshot.truncated) toStore.truncated = true;
+  await songloft.storage.set(WRITEBACK_SNAPSHOT_KEY, toStore);
+}
+
+export async function clearWritebackSnapshot(): Promise<void> {
+  await songloft.storage.set(WRITEBACK_SNAPSHOT_KEY, null);
+}
+
+/** 写回 UI/设置页用的轻量元数据（起点失败原因、最近结果等）。 */
+export interface WritebackMeta {
+  snapshotError: string;
+  lastError: string;
+  lastResultOk: boolean | null;
+  paused: boolean;
+  /** 是否曾经成功打开过写回（用于区分首次/再打开 toast）。 */
+  openedOnce: boolean;
+}
+
+const WRITEBACK_META_KEY = "loved_writeback_meta";
+
+const DEFAULT_WRITEBACK_META: WritebackMeta = {
+  snapshotError: "",
+  lastError: "",
+  lastResultOk: null,
+  paused: false,
+  openedOnce: false,
+};
+
+export async function loadWritebackMeta(): Promise<WritebackMeta> {
+  try {
+    const raw = await songloft.storage.get(WRITEBACK_META_KEY);
+    const data = asObject(raw);
+    return {
+      snapshotError: typeof data.snapshotError === "string" ? data.snapshotError : "",
+      lastError: typeof data.lastError === "string" ? data.lastError : "",
+      lastResultOk:
+        data.lastResultOk === true ? true : data.lastResultOk === false ? false : null,
+      paused: data.paused === true,
+      openedOnce: data.openedOnce === true,
+    };
+  } catch {
+    return { ...DEFAULT_WRITEBACK_META };
+  }
+}
+
+export async function saveWritebackMeta(meta: WritebackMeta): Promise<WritebackMeta> {
+  const toStore: WritebackMeta = {
+    snapshotError: typeof meta.snapshotError === "string" ? meta.snapshotError : "",
+    lastError: typeof meta.lastError === "string" ? meta.lastError : "",
+    lastResultOk:
+      meta.lastResultOk === true ? true : meta.lastResultOk === false ? false : null,
+    paused: meta.paused === true,
+    openedOnce: meta.openedOnce === true,
+  };
+  await songloft.storage.set(WRITEBACK_META_KEY, toStore);
+  return toStore;
+}
+
+export async function clearWritebackMeta(): Promise<void> {
+  await songloft.storage.set(WRITEBACK_META_KEY, { ...DEFAULT_WRITEBACK_META });
+}
 
 export async function loadLovedSchedule(): Promise<LovedScheduleState> {
   try {

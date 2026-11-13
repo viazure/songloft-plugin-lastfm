@@ -1,7 +1,9 @@
-/** Last.fm Loved → Songloft 红心（收藏）或自定义普通歌单。单向覆盖写入，不做反向同步。 */
+/** Last.fm Loved → Songloft 红心（收藏）或自定义普通歌单。覆盖写入（可受空/截断保护）。 */
 
 import { LastFmScrobbler } from "./scrobbler";
 import { matchLovedTracks, type LibrarySongRef } from "./match";
+import { favoritesEchoSuppressor } from "./echo";
+import { isLovedListUnsafe } from "./writeback-merge";
 
 /** Default custom-playlist name when lovedPlaylistName is empty. */
 export const LOVED_PLAYLIST_NAME = "Last.fm Loved";
@@ -38,6 +40,10 @@ export interface LovedPlaylistSyncOk {
   /** True when resolved custom playlist name differs from previousPlaylistName. Always false for favorites. */
   targetChanged: boolean;
   writeMethod?: "replaceSongs" | "clearAdd" | "recreate";
+  /** 写回合并模式 / 空截断保护等结果说明（成功路径也可带）。 */
+  reason?: string;
+  /** 因 Loved 空/截断/不完整而跳过了覆盖删除。 */
+  removalsSuppressed?: boolean;
 }
 
 export interface LovedPlaylistSyncFail {
@@ -149,12 +155,13 @@ export function getReplaceSongs(
  * Load every song in a playlist via getSongs limit/offset.
  * Stops on an empty or short page, or if the offset would not advance.
  * Also stops if a full page repeats the previous page (host ignoring offset).
+ * complete=false 表示分页未走完/宿主忽略 offset，此时禁止据此覆盖删除。
  */
-export async function listAllPlaylistSongs(
+export async function listAllPlaylistSongsDetailed(
   api: Pick<PlaylistsApi, "getSongs">,
   playlistId: number,
   pageSize: number = PLAYLIST_SONGS_PAGE_SIZE
-): Promise<Song[]> {
+): Promise<{ songs: Song[]; complete: boolean }> {
   const size =
     Number.isFinite(pageSize) && pageSize > 0 ? Math.floor(pageSize) : PLAYLIST_SONGS_PAGE_SIZE;
   const out: Song[] = [];
@@ -162,17 +169,33 @@ export async function listAllPlaylistSongs(
   let prevKey: string | null = null;
   for (;;) {
     const batch = await api.getSongs(playlistId, { limit: size, offset });
-    if (!Array.isArray(batch) || batch.length === 0) break;
+    if (!Array.isArray(batch) || batch.length === 0) {
+      return { songs: out, complete: true };
+    }
     const key = batch.map((s) => s?.id).join(",");
-    if (prevKey !== null && key === prevKey) break;
+    if (prevKey !== null && key === prevKey) {
+      return { songs: out, complete: false };
+    }
     prevKey = key;
     out.push(...batch);
-    if (batch.length < size) break;
+    if (batch.length < size) {
+      return { songs: out, complete: true };
+    }
     const nextOffset = offset + batch.length;
-    if (nextOffset <= offset) break;
+    if (nextOffset <= offset) {
+      return { songs: out, complete: false };
+    }
     offset = nextOffset;
   }
-  return out;
+}
+
+export async function listAllPlaylistSongs(
+  api: Pick<PlaylistsApi, "getSongs">,
+  playlistId: number,
+  pageSize: number = PLAYLIST_SONGS_PAGE_SIZE
+): Promise<Song[]> {
+  const { songs } = await listAllPlaylistSongsDetailed(api, playlistId, pageSize);
+  return songs;
 }
 
 function playlistSongIds(songs: Song[] | null | undefined): number[] {
@@ -211,53 +234,51 @@ async function removeInChunks(api: PlaylistsApi, playlistId: number, songIds: nu
 }
 
 /**
- * Incremental rewrite: load the full playlist (paged), add missing songs first, then
- * remove extras. If add fails, existing songs remain. Returns ids still to remove
- * after the add phase (add errors propagate unchanged).
- */
-async function addMissingPlaylistSongs(
-  api: PlaylistsApi,
-  playlistId: number,
-  songIds: number[]
-): Promise<number[]> {
-  const currentIds = playlistSongIds(await listAllPlaylistSongs(api, playlistId));
-  const { toAdd, toRemove } = diffPlaylistSongs(currentIds, songIds);
-  if (toAdd.length) await addInChunks(api, playlistId, toAdd);
-  return toRemove;
-}
-
-async function applyPlaylistDiff(
-  api: PlaylistsApi,
-  playlistId: number,
-  songIds: number[]
-): Promise<void> {
-  const toRemove = await addMissingPlaylistSongs(api, playlistId, songIds);
-  if (toRemove.length) await removeInChunks(api, playlistId, toRemove);
-}
-
-/**
  * Overwrite the built-in 收藏 playlist with songIds.
  * Prefers playlists.replaceSongs when the host exposes it; on missing method or failure
  * (including host "cannot replace built-in playlist"), falls back to incremental
  * add-missing-then-remove-extras (writeMethod remains "clearAdd" for compatibility).
  * Never clears the whole list first. Never deletes or recreates the playlist.
+ * Registers the diff for echo suppression so a later write-back switch does not
+ * replay our own add/remove as a user love/unlove.
+ * allowRemove=false：只补缺失，不删多余（Loved 空/截断/列表不完整时）。
  */
 export async function writeFavoritesPlaylist(
   api: PlaylistsApi,
   songIds: number[],
-  playlistId: number
-): Promise<{ playlistId: number; writeMethod: "replaceSongs" | "clearAdd" }> {
+  playlistId: number,
+  opts?: { allowRemove?: boolean }
+): Promise<{
+  playlistId: number;
+  writeMethod: "replaceSongs" | "clearAdd";
+  removalsSuppressed: boolean;
+}> {
+  const allowRemove = opts?.allowRemove !== false;
+  // 覆盖路径不 endRound：开写前清掉上一轮残留，避免键长留误伤后续用户操作。
+  favoritesEchoSuppressor.clear();
+  const listed = await listAllPlaylistSongsDetailed(api, playlistId);
+  const currentIds = playlistSongIds(listed.songs);
+  const listingComplete = listed.complete;
+  const canRemove = allowRemove && listingComplete;
+  const { toAdd, toRemove } = diffPlaylistSongs(currentIds, songIds);
+  const effectiveRemove = canRemove ? toRemove : [];
+  favoritesEchoSuppressor.expectDiff(playlistId, toAdd, effectiveRemove);
   const replace = getReplaceSongs(api);
-  if (replace) {
+  if (replace && canRemove) {
     try {
       await replace(playlistId, songIds);
-      return { playlistId, writeMethod: "replaceSongs" };
+      return { playlistId, writeMethod: "replaceSongs", removalsSuppressed: false };
     } catch {
       // fall through to incremental add-then-remove
     }
   }
-  await applyPlaylistDiff(api, playlistId, songIds);
-  return { playlistId, writeMethod: "clearAdd" };
+  if (toAdd.length) await addInChunks(api, playlistId, toAdd);
+  if (effectiveRemove.length) await removeInChunks(api, playlistId, effectiveRemove);
+  return {
+    playlistId,
+    writeMethod: "clearAdd",
+    removalsSuppressed: !canRemove && toRemove.length > 0,
+  };
 }
 
 export async function findPlaylistByName(api: PlaylistsApi, name: string): Promise<Playlist | null> {
@@ -284,38 +305,70 @@ export function mayDeleteAndRecreatePlaylist(
 export async function upsertLovedPlaylist(
   api: PlaylistsApi,
   songIds: number[],
-  name: string = LOVED_PLAYLIST_NAME
+  name: string = LOVED_PLAYLIST_NAME,
+  opts?: { allowRemove?: boolean }
 ): Promise<{
   playlistId: number;
   created: boolean;
   playlistIdChanged: boolean;
   writeMethod: "replaceSongs" | "clearAdd" | "recreate";
+  removalsSuppressed: boolean;
 }> {
+  const allowRemove = opts?.allowRemove !== false;
   const existing = await findPlaylistByName(api, name);
   if (existing) {
     const playlistId = existing.id;
     if (isBuiltInFavorites(existing)) {
-      const written = await writeFavoritesPlaylist(api, songIds, playlistId);
+      const written = await writeFavoritesPlaylist(api, songIds, playlistId, { allowRemove });
       return {
         playlistId: written.playlistId,
         created: false,
         playlistIdChanged: false,
         writeMethod: written.writeMethod,
+        removalsSuppressed: written.removalsSuppressed,
       };
     }
     if (!mayDeleteAndRecreatePlaylist(existing)) {
       throw new Error("不能把内置歌单当作自定义同步目标来删除重建");
     }
-    let toRemove: number[];
+    let listedIds: number[];
+    let listingComplete: boolean;
     try {
-      toRemove = await addMissingPlaylistSongs(api, playlistId, songIds);
+      const listed = await listAllPlaylistSongsDetailed(api, playlistId);
+      listedIds = playlistSongIds(listed.songs);
+      listingComplete = listed.complete;
     } catch (err) {
-      // Add (or list) failed: keep the existing playlist. Do not delete+recreate.
       throw err;
+    }
+    const { toAdd, toRemove } = diffPlaylistSongs(listedIds, songIds);
+    const canRemove = allowRemove && listingComplete;
+    const removalsSuppressed = !canRemove && toRemove.length > 0;
+    favoritesEchoSuppressor.clear();
+    favoritesEchoSuppressor.expectDiff(playlistId, toAdd, canRemove ? toRemove : []);
+    try {
+      if (toAdd.length) await addInChunks(api, playlistId, toAdd);
+    } catch (err) {
+      // Add failed: keep the existing playlist. Do not delete+recreate.
+      throw err;
+    }
+    if (!canRemove) {
+      return {
+        playlistId,
+        created: false,
+        playlistIdChanged: false,
+        writeMethod: "clearAdd",
+        removalsSuppressed,
+      };
     }
     try {
       if (toRemove.length) await removeInChunks(api, playlistId, toRemove);
-      return { playlistId, created: false, playlistIdChanged: false, writeMethod: "clearAdd" };
+      return {
+        playlistId,
+        created: false,
+        playlistIdChanged: false,
+        writeMethod: "clearAdd",
+        removalsSuppressed: false,
+      };
     } catch {
       if (typeof api.delete === "function") {
         try {
@@ -338,6 +391,7 @@ export async function upsertLovedPlaylist(
         created: true,
         playlistIdChanged: true,
         writeMethod: "recreate",
+        removalsSuppressed: false,
       };
     }
   }
@@ -350,7 +404,13 @@ export async function upsertLovedPlaylist(
     description: "Synced from Last.fm loved tracks",
   });
   if (songIds.length) await addInChunks(api, created.id, songIds);
-  return { playlistId: created.id, created: true, playlistIdChanged: false, writeMethod: "clearAdd" };
+  return {
+    playlistId: created.id,
+    created: true,
+    playlistIdChanged: false,
+    writeMethod: "clearAdd",
+    removalsSuppressed: false,
+  };
 }
 
 export interface SyncDeps {
@@ -396,12 +456,29 @@ export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylist
     partial.matched = match.matched;
     partial.unmatched = match.unmatched;
     partial.unmatchedSamples = match.unmatchedSamples;
+    const unsafe = isLovedListUnsafe({
+      lovedCount: loved.tracks.length,
+      truncated: loved.truncated,
+    });
+    const allowRemove = !unsafe;
+    const suppressNote = unsafe
+      ? loved.tracks.length <= 0
+        ? "Loved 为空，已跳过覆盖删除，仅保留目的地现有歌曲"
+        : loved.truncated
+          ? "Loved 列表已截断，已跳过覆盖删除，仅补上已拉到的匹配曲"
+          : "Loved 列表不完整，已跳过覆盖删除"
+      : "";
     const target = deps.target === "playlist" ? "playlist" : "favorites";
     if (target === "playlist") {
       const playlistName = resolveLovedPlaylistName(deps.playlistName);
       const prev = typeof deps.previousPlaylistName === "string" ? deps.previousPlaylistName.trim() : "";
       const targetChanged = !!prev && prev !== playlistName;
-      const upsert = await upsertLovedPlaylist(deps.playlistsApi, match.matchedIds, playlistName);
+      const upsert = await upsertLovedPlaylist(deps.playlistsApi, match.matchedIds, playlistName, {
+        allowRemove,
+      });
+      const note = [suppressNote, upsert.removalsSuppressed && !suppressNote ? "目的地列表不完整，已跳过覆盖删除" : ""]
+        .filter(Boolean)
+        .join(" · ");
       return {
         ok: true,
         ts,
@@ -416,6 +493,8 @@ export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylist
         playlistName,
         targetChanged,
         writeMethod: upsert.writeMethod,
+        removalsSuppressed: !!suppressNote || upsert.removalsSuppressed,
+        reason: note || undefined,
       };
     }
     const favorites = await findBuiltInFavorites(deps.playlistsApi);
@@ -431,7 +510,15 @@ export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylist
         reason: "未找到内置「收藏」歌单",
       };
     }
-    const written = await writeFavoritesPlaylist(deps.playlistsApi, match.matchedIds, favorites.id);
+    const written = await writeFavoritesPlaylist(deps.playlistsApi, match.matchedIds, favorites.id, {
+      allowRemove,
+    });
+    const note = [
+      suppressNote,
+      written.removalsSuppressed && !suppressNote ? "收藏列表不完整，已跳过覆盖删除" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
     return {
       ok: true,
       ts,
@@ -446,6 +533,8 @@ export async function syncLovedToPlaylist(deps: SyncDeps): Promise<LovedPlaylist
       playlistName: favorites.name || FAVORITES_PLAYLIST_NAME,
       targetChanged: false,
       writeMethod: written.writeMethod,
+      removalsSuppressed: !!suppressNote || written.removalsSuppressed,
+      reason: note || undefined,
     };
   } catch (e) {
     // Preserve any counts already obtained before the failure (do not flash false zeros).

@@ -29,6 +29,15 @@ describe("loadSettings defaults", () => {
     expect((await loadSettings()).scrobbleNetwork).toBe(true);
   });
 
+  it("lovedWritebackEnabled defaults to false and only enables on explicit true", async () => {
+    const { loadSettings } = await import("../src/store");
+    expect((await loadSettings()).lovedWritebackEnabled).toBe(false);
+    memory.set("settings", { lovedWritebackEnabled: true });
+    expect((await loadSettings()).lovedWritebackEnabled).toBe(true);
+    memory.set("settings", { lovedWritebackEnabled: "yes" });
+    expect((await loadSettings()).lovedWritebackEnabled).toBe(false);
+  });
+
   it("lovedSyncTarget defaults to favorites; keeps playlist; invalid falls back", async () => {
     const { loadSettings, normalizeLovedSyncTarget } = await import("../src/store");
     expect(normalizeLovedSyncTarget(undefined)).toBe("favorites");

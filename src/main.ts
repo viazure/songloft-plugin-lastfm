@@ -7,6 +7,10 @@ import { bindLovedScheduleTick } from "./loved-sync-run";
 import { statsScheduler } from "./stats-schedule";
 import { bindStatsScheduleTick } from "./stats-sync-run";
 import {
+  hostPlaylistSongsChangeSupported,
+  syncWritebackSubscription,
+} from "./writeback-service";
+import {
   loadLovedSchedule,
   loadSettings,
   loadStatsSchedule,
@@ -77,6 +81,20 @@ async function onInit(): Promise<void> {
     songloft.log.warn("[lastfm] 已有应用凭证但未连接账号 — 打开设置页连接");
   } else {
     songloft.log.info(`[lastfm] ready as ${settings.username || "(session)"}`);
+  }
+
+  // 收藏事件订阅：空闲唤醒后必须恢复；旧宿主缺接口时只提示，不抛。
+  if (settings.lovedWritebackEnabled) {
+    if (!hostPlaylistSongsChangeSupported()) {
+      songloft.log.warn(
+        "[lastfm] 收藏写回已开启，但当前 Songloft 版本还不支持即时写回，请升级 Songloft"
+      );
+    } else {
+      const sub = await syncWritebackSubscription();
+      if (!sub.subscribed) {
+        songloft.log.warn("[lastfm] 收藏写回订阅失败，稍后保存设置时重试");
+      }
+    }
   }
 }
 

@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/songloft-org/plugin-toolchain/main/schemas/plugin.schema.json",
   "name": "Last.fm",
   "version": "0.3.0",
-  "description": "听歌自动 Scrobble 到 Last.fm；可配记录规则，可按内容（本地 / 网络音乐）和播放方式（小爱音箱 / Songloft 客户端）筛选；支持红心到 Last.fm（单向）、把 Last.fm 红心同步到 Songloft「收藏」或自定义歌单，以及同步到官方播放统计",
+  "description": "听歌自动记到 Last.fm，并在 Songloft 收藏与 Last.fm 喜欢之间同步。",
   "author": "viazure",
   "homepage": "https://github.com/viazure/songloft-plugin-lastfm",
   "license": "Apache-2.0",

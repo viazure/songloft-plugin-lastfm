@@ -246,13 +246,23 @@ describe("writeFavoritesPlaylist", () => {
     expect(api.state.find((p) => p.id === 1)?.songs).toEqual([9]);
   });
 
-  it("empty matched set clears the favorites playlist", async () => {
+  it("empty matched set clears the favorites playlist when removals are allowed", async () => {
     const api = mockApi(favoritesFixtures());
     const r = await writeFavoritesPlaylist(api, [], 1);
     expect(r.writeMethod).toBe("clearAdd");
+    expect(r.removalsSuppressed).toBe(false);
     expect(api.state.find((p) => p.id === 1)?.songs).toEqual([]);
     expect(api.calls.delete).toEqual([]);
     expect(api.calls.create).toBe(0);
+  });
+
+  it("skips removals when allowRemove is false", async () => {
+    const api = mockApi(favoritesFixtures());
+    const before = [...(api.state.find((p) => p.id === 1)?.songs ?? [])];
+    const r = await writeFavoritesPlaylist(api, [], 1, { allowRemove: false });
+    expect(r.removalsSuppressed).toBe(true);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual(before);
+    expect(api.calls.removeSongs).toEqual([]);
   });
 
   it("paginates getSongs so leftovers on later pages are fully removed", async () => {
@@ -655,5 +665,56 @@ describe("syncLovedToPlaylist playlist target", () => {
     expect(r.created).toBe(false);
     expect(api.state[0].songs).toEqual([1]);
     expect(api.calls.delete).toEqual([]);
+  });
+});
+
+describe("syncLovedToPlaylist empty/truncated protection", () => {
+  const songsApi = {
+    list: async () => [
+      { id: 1, artist: "A", title: "T1" },
+      { id: 2, artist: "B", title: "T2" },
+    ],
+  };
+
+  it("does not empty favorites when Loved pull is empty", async () => {
+    const api = mockApi(favoritesFixtures());
+    const before = [...(api.state.find((p) => p.id === 1)?.songs ?? [])];
+    const r = await syncLovedToPlaylist({
+      scrobbler: { getLovedTracks: async () => ({ tracks: [], truncated: false }) } as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      now: () => 1,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.removalsSuppressed).toBe(true);
+    expect(api.state.find((p) => p.id === 1)?.songs).toEqual(before);
+    expect(api.calls.removeSongs).toEqual([]);
+  });
+
+  it("does not remove unmatched favorites when Loved is truncated@1000", async () => {
+    const api = mockApi(favoritesFixtures());
+    const before = [...(api.state.find((p) => p.id === 1)?.songs ?? [])];
+    const r = await syncLovedToPlaylist({
+      scrobbler: {
+        getLovedTracks: async () => ({
+          tracks: [{ artist: "A", title: "T1" }],
+          truncated: true,
+        }),
+      } as any,
+      username: "u",
+      songsApi: songsApi as any,
+      playlistsApi: api,
+      now: () => 2,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.removalsSuppressed).toBe(true);
+    expect(r.truncated).toBe(true);
+    // May add matched id 1, but must not strip the rest
+    const songs = api.state.find((p) => p.id === 1)?.songs ?? [];
+    expect(songs).toEqual(expect.arrayContaining(before));
+    expect(api.calls.removeSongs).toEqual([]);
   });
 });
